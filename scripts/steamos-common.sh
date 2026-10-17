@@ -28,6 +28,19 @@ csh_require_runtime() {
     unset PYTHONHOME PYTHONPATH
 }
 
+csh_prepare_csdm() {
+    local directory="$1"
+    local file
+    for file in csdm AppRun cs-demo-manager resources/app.asar; do
+        [[ -f "$directory/$file" ]] || csh_die "La AppImage está incompleta: falta $directory/$file."
+    done
+    [[ -x "$directory/AppRun" && -x "$directory/cs-demo-manager" ]] ||
+        csh_die "AppRun o cs-demo-manager no se pueden ejecutar en $directory. Revisa los permisos y el disco."
+    # The verified v3.20.1 AppImage ships this shell launcher as 0644.
+    chmod u+x "$directory/csdm"
+    [[ -x "$directory/csdm" ]] || csh_die "No se puede ejecutar $directory/csdm. Revisa si el disco usa noexec."
+}
+
 csh_database() {
     bash "$CSH_PROJECT_ROOT/scripts/steamos-postgres.sh" "$@"
 }

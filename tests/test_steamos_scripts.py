@@ -100,6 +100,42 @@ class SteamOSScriptsTests(unittest.TestCase):
         return [call for line in path.read_text().splitlines()
                 if (call := json.loads(line))['name'] == name]
 
+    def test_appimage_cli_with_release_permissions_can_run_after_install(self):
+        # Official v3.20.1 AppImage (SHA-256 95608b6c...65c5115): csdm is
+        # a regular shell script with mode 0644; AppRun and Electron are 0755.
+        extracted = self.root / 'squashfs-root'
+        extracted.mkdir()
+        cli = extracted / 'csdm'
+        cli.write_text('#!/bin/sh\nELECTRON_RUN_AS_NODE=1 "$(dirname "$0")/cs-demo-manager" '
+                       '"$(dirname "$0")/resources/app.asar/cli.js" "$@"\n')
+        cli.chmod(0o644)
+        self.write_tool(extracted / 'cs-demo-manager')
+        self.write_tool(extracted / 'AppRun')
+        (extracted / 'resources').mkdir()
+        (extracted / 'resources/app.asar').touch()
+        common = self.project / 'scripts/steamos-common.sh'
+        installed = self.install / 'csdm-3.20.1'
+        result = subprocess.run(['bash', '-euc',
+                                 'source "$1"; csh_prepare_csdm "$2"; '
+                                 'mv -- "$2" "$3"; csh_prepare_csdm "$3"; "$3/csdm" help',
+                                 'test', str(common), str(extracted), str(installed)],
+                                env=self.env, capture_output=True, text=True, timeout=10)
+        self.assert_success(result)
+        self.assertEqual(self.calls('cs-demo-manager')[-1]['args'],
+                         [str(installed / 'resources/app.asar/cli.js'), 'help'])
+        self.assertEqual((installed / 'csdm').stat().st_mode & 0o777, 0o744)
+
+    def test_incomplete_appimage_reports_the_missing_file(self):
+        extracted = self.root / 'squashfs-root'
+        extracted.mkdir()
+        for name in ('csdm', 'AppRun', 'cs-demo-manager'):
+            self.write_tool(extracted / name)
+        result = subprocess.run(['bash', '-euc', 'source "$1"; csh_prepare_csdm "$2"',
+                                 'test', str(self.project / 'scripts/steamos-common.sh'), str(extracted)],
+                                env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(str(extracted / 'resources/app.asar'), result.stderr)
+
     def test_help_and_wrong_platform_do_not_install_anything(self):
         self.assert_success(self.call('install-steamos.sh', '--help'))
         self.assert_success(self.call('steamos.sh', '--help'))

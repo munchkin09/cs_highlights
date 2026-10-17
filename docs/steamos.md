@@ -90,6 +90,7 @@ CSH_CONFIG="$HOME/mis-partidas.toml" ./scripts/steamos.sh doctor
 
 - **El puerto 55432 está ocupado:** consulta `postgres.log` e identifica el proceso que lo usa. Los scripts no detienen procesos ajenos ni conectan deliberadamente a otra base.
 - **Error de checksum:** la descarga se descarta sin ejecutarse; reintenta. No omitas la verificación.
+- **«La AppImage no contiene los ejecutables esperados» con el instalador anterior:** la AppImage oficial 3.20.1 incluye `csdm` con permisos `0644`. El instalador actualizado le añade permiso de ejecución. Copia los scripts actualizados al equipo y repite `./scripts/install-steamos.sh`; reutilizará el entorno ya instalado. Si faltan archivos de verdad, ahora indica su ruta concreta.
 - **Faltan bibliotecas al ejecutar CS Demo Manager o falla el sandbox de Electron:** conserva el error y comprueba las actualizaciones de SteamOS en sus ajustes. Los scripts no desactivan el sandbox ni instalan paquetes en la raíz. La AppImage depende de las bibliotecas gráficas del escritorio.
 - **`doctor` falla:** revisa sus diagnósticos de Steam, CS2, sesión gráfica, rutas, base y FFmpeg. Instalar dependencias no autentica Steam ni configura el juego por ti.
 - **Has copiado el proyecto desde macOS:** la `.venv` no es portable; estos scripts usan su propio Python para Linux. Si los scripts perdieron permisos, ejecuta `bash scripts/install-steamos.sh` y `bash scripts/steamos.sh doctor`.

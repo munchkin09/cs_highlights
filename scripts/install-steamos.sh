@@ -76,16 +76,16 @@ fi
 csh_require_runtime
 "$CSH_RUNTIME/bin/python" -m pip install --no-deps --no-build-isolation --editable "$CSH_PROJECT_ROOT"
 
-if [[ ! -x "$CSH_CSDM_DIR/csdm" || ! -x "$CSH_CSDM_DIR/AppRun" ]]; then
-    [[ ! -e "$CSH_CSDM_DIR" ]] || csh_die "Instalación incompleta en $CSH_CSDM_DIR; muévela antes de reintentar."
+if [[ ! -e "$CSH_CSDM_DIR" ]]; then
     download "https://github.com/akiver/cs-demo-manager/releases/download/v$CSH_CSDM_VERSION/CS-Demo-Manager-$CSH_CSDM_VERSION.AppImage" \
         95608b6c4aa28d0328a0212bebe0b2ee1989b215e817bb7b8d0042a2655c5115 "$scratch/csdm.AppImage"
     chmod 700 "$scratch/csdm.AppImage"
     # Extraction avoids requiring FUSE or a writable system partition.
     (cd "$scratch" && ./csdm.AppImage --appimage-extract > extraction.log)
-    [[ -x "$scratch/squashfs-root/csdm" && -x "$scratch/squashfs-root/AppRun" ]] ||
-        csh_die 'La AppImage no contiene los ejecutables esperados.'
+    csh_prepare_csdm "$scratch/squashfs-root"
     mv -- "$scratch/squashfs-root" "$CSH_CSDM_DIR"
+else
+    csh_prepare_csdm "$CSH_CSDM_DIR"
 fi
 "$CSH_CSDM_DIR/csdm" help > "$scratch/csdm-help.txt"
 csh_database init
