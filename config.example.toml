@@ -1,0 +1,32 @@
+[player]
+# Siempre entre comillas. Usa el SteamID64 de la cuenta abierta en Steam.
+steam_id = "76561198000000000"
+
+[paths]
+# Rutas relativas se resuelven respecto a este archivo; se admite ~.
+data_dir = "./data"
+cs2_dir = "~/.local/share/Steam/steamapps/common/Counter-Strike Global Offensive"
+# Omite esta opción para usar $XDG_CONFIG_HOME/csdm/settings.json.
+# csdm_settings = "~/.config/csdm/settings.json"
+
+[tools]
+# Ejecutables, no comandos con argumentos ni alias del shell.
+csdm = "/opt/CS Demo Manager/csdm"
+ffmpeg = "ffmpeg"
+ffprobe = "ffprobe"
+psql = "psql"
+
+[selection]
+before_seconds = 5.0
+after_seconds = 3.0
+
+[video]
+width = 1920
+height = 1080
+fps = 60
+crf = 20
+
+[runtime]
+timeout_seconds = 7200
+# Reserva adicional al cálculo de imágenes sin comprimir.
+reserve_gib = 2.0
