@@ -6,6 +6,26 @@ PoC local para Linux: descubre tus partidas de Valve, descarga las demos, extrae
 Steam → CS Demo Manager → demo + análisis JSON → intervalos → CS2 → clips → MP4
 ```
 
+## Steam Machine con SteamOS
+
+En **modo Escritorio**, abre Konsole en la carpeta del proyecto y ejecuta, como tu usuario habitual:
+
+```bash
+./scripts/install-steamos.sh
+./scripts/steamos.sh db credentials
+./scripts/steamos.sh csdm
+```
+
+El instalador prepara Python 3.12, FFmpeg/ffprobe, PostgreSQL 17 y CS Demo Manager 3.20.1 en tu carpeta de usuario. Genera `config.steamos.toml` con las rutas de las herramientas; edita tu SteamID64 y la ruta de CS2. Conecta CS Demo Manager a la base local usando los datos de `db credentials` y configura FFmpeg y Playback como explica la [guía de SteamOS](docs/steamos.md).
+
+```bash
+./scripts/steamos.sh doctor
+./scripts/steamos.sh smoke
+./scripts/steamos.sh run
+```
+
+Los lanzadores preparan el entorno y arrancan la base automáticamente. La instalación no necesita `sudo`, no desactiva la protección de escritura de SteamOS y no usa la `.venv` copiada de otro equipo. Steam y CS2 se instalan desde Steam. Consulta la guía para parar PostgreSQL, repetir la instalación y resolver fallos. **La captura real en SteamOS sigue pendiente de validación.**
+
 ## Preparar el PC Linux
 
 Necesitas un escritorio Linux con GPU capaz de ejecutar CS2, Steam **nativo**, CS2 instalado y una sesión de Steam iniciada. Abre CS2 una vez para crear su configuración de vídeo y después ciérralo. Ejecuta esta CLI desde el escritorio, sin otras grabaciones de CS Demo Manager en curso.
