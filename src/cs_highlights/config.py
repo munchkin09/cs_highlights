@@ -32,7 +32,7 @@ class Config:
     def output_settings(self) -> dict:
         fields = ("steam_id", "before_seconds", "after_seconds", "width", "height", "fps", "crf")
         values = asdict(self)
-        return {"pipeline_version": 1, **{key: values[key] for key in fields}}
+        return {"pipeline_version": 2, **{key: values[key] for key in fields}}
 
     @property
     def fingerprint(self) -> str:

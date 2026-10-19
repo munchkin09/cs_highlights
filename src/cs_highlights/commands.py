@@ -29,6 +29,18 @@ class Runner:
                                            cwd=cwd, env=env, start_new_session=True)
             except OSError as exc:
                 raise HighlightsError(f"No se pudo ejecutar {argv[0]}: {exc}") from exc
+
+            def read_output():
+                stdout.seek(0)
+                output = stdout.read(8 * 1024 * 1024).decode("utf-8", errors="replace")
+                stderr.seek(max(stderr_start, stderr.seek(0, os.SEEK_END) - 65536))
+                errors = stderr.read().decode("utf-8", errors="replace")
+                if log:
+                    stderr.seek(0, os.SEEK_END)
+                    stderr.write(output.encode())
+                    stderr.flush()
+                return output, errors
+
             try:
                 process.wait(timeout=timeout)
             except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
@@ -41,19 +53,14 @@ class Runner:
                     if process.poll() is None:
                         os.killpg(process.pid, signal.SIGKILL)
                         process.wait()
+                # Preserve the recording/conversion diagnostics even when interrupted.
+                read_output()
                 if isinstance(exc, KeyboardInterrupt):
                     raise
                 raise HighlightsError(f"Tiempo agotado en {argv[0]}. Revisa la cola de CS Demo Manager; "
                                       "su trabajo puede seguir activo.") from exc
-            stdout.seek(0)
             # JSON download/queue results are small. Large exports go directly to files.
-            output = stdout.read(8 * 1024 * 1024).decode("utf-8", errors="replace")
-            stderr.seek(max(stderr_start, stderr.seek(0, os.SEEK_END) - 65536))
-            errors = stderr.read().decode("utf-8", errors="replace")
-            if log:
-                stderr.seek(0, os.SEEK_END)
-                stderr.write(output.encode())
-                stderr.flush()
+            output, errors = read_output()
             result = Result(process.returncode, output, errors)
             if check and result.returncode:
                 detail = f" Revisa {log}." if log else ""

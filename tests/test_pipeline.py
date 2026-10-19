@@ -7,7 +7,8 @@ import unittest
 from cs_highlights.commands import Result
 from cs_highlights.csdm import CSDM
 from cs_highlights.errors import HighlightsError
-from cs_highlights.pipeline import Pipeline
+from cs_highlights.pipeline import Pipeline, capture_segments
+from cs_highlights.selection import Interval
 from cs_highlights.storage import read_json, write_json
 from helpers import config, raw_match
 
@@ -90,12 +91,12 @@ class PipelineTests(unittest.TestCase):
         output = self.pipeline.process(self.demo)
         self.assertTrue(output.exists())
         self.assertEqual(self.backend.exports, 1)
-        self.assertEqual(self.backend.renders, 3)
+        self.assertEqual(self.backend.renders, 4)
         self.assertEqual(self.manifest()["status"], "complete")
         self.assertTrue((output.parent / "analysis.json").exists())
         self.assertEqual(list(output.parent.rglob("*.tga")), [])
         self.assertEqual(self.pipeline.process(self.demo), output)
-        self.assertEqual((self.backend.exports, self.backend.renders), (1, 3))
+        self.assertEqual((self.backend.exports, self.backend.renders), (1, 4))
 
     def test_failed_render_resumes_after_validated_clip(self):
         self.backend.fail_at = 2
@@ -107,7 +108,7 @@ class PipelineTests(unittest.TestCase):
         output = self.pipeline.process(self.demo)
         self.assertTrue(output.exists())
         self.assertEqual(self.backend.exports, 1)
-        self.assertEqual(self.backend.renders, 4)  # 1 valid + 1 failed + remaining 2
+        self.assertEqual(self.backend.renders, 5)  # 1 valid + 1 failed + remaining 3
 
     def test_interrupted_after_recording_recovers_output_without_rerecording(self):
         self.backend.interrupt_after_write = True
@@ -115,7 +116,7 @@ class PipelineTests(unittest.TestCase):
             self.pipeline.process(self.demo)
         self.assertEqual(self.manifest()["status"], "interrupted")
         self.pipeline.process(self.demo)
-        self.assertEqual(self.backend.renders, 3)
+        self.assertEqual(self.backend.renders, 4)
 
     def test_active_daemon_does_not_enqueue_duplicate(self):
         self.backend.busy = True
@@ -148,7 +149,7 @@ class PipelineTests(unittest.TestCase):
         output = self.pipeline.process(self.demo)
         output.write_text("corrupt")
         self.pipeline.process(self.demo)
-        self.assertEqual(self.backend.renders, 3)
+        self.assertEqual(self.backend.renders, 4)
         self.assertEqual(self.manifest()["status"], "complete")
 
     def test_new_settings_preserve_previous_output(self):
@@ -157,6 +158,30 @@ class PipelineTests(unittest.TestCase):
         second = Pipeline(changed, FakeCSDM(changed), report=lambda _: None).process(self.demo)
         self.assertNotEqual(first, second)
         self.assertTrue(first.exists())
+
+    def test_long_won_clutch_without_kills_is_captured_and_joined(self):
+        self.backend.raw = raw_match([])
+        self.backend.raw['clutches'] = [{'tick': 3100, 'roundNumber': 2,
+                                        'clutcherSteamId': self.c.steam_id,
+                                        'opponentCount': 3, 'won': True}]
+        output = self.pipeline.process(self.demo)
+        manifest = self.manifest()
+        self.assertTrue(output.exists())
+        self.assertEqual(manifest['status'], 'complete')
+        selection = read_json(output.parent / 'intervals.json')
+        self.assertEqual(len(selection['intervals']), 1)
+        self.assertGreater(len(selection['capture_segments']), 1)
+        self.assertEqual(manifest['expected_duration'], (7000 - 3000) / 64)
+        self.assertTrue(all(c['probe']['duration'] <= 10 for c in manifest['clips'].values()))
+
+    def test_capture_segments_have_no_gaps_duplicates_or_tiny_tail(self):
+        block = Interval(100, 1381, 1, self.c.steam_id, 'won_clutch', (100, 740, 1380))
+        segments = capture_segments([block], 64)
+        self.assertEqual(segments[0].start_tick, block.start_tick)
+        self.assertEqual(segments[-1].end_tick, block.end_tick)
+        self.assertTrue(all(a.end_tick == b.start_tick for a, b in zip(segments, segments[1:])))
+        self.assertEqual(tuple(t for c in segments for t in c.kill_ticks), block.kill_ticks)
+        self.assertTrue(all(320 <= c.end_tick - c.start_tick <= 640 for c in segments))
 
 
 class QueueContractTests(unittest.TestCase):

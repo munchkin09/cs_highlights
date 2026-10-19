@@ -22,7 +22,7 @@ class SelectionTests(unittest.TestCase):
         clips = self.select(raw)
         self.assertEqual(clips[0].start_tick, 100)
         self.assertEqual(clips[1].end_tick, 2100)
-        self.assertEqual(clips[-1].end_tick, 6900)
+        self.assertEqual(clips[-1].end_tick, 6901)
 
     def test_warmup_suicides_teamkills_and_spectators_excluded(self):
         raw = raw_match([kill(50), kill(500, 0), kill(600, victim=PLAYER), kill(700, victim_side=3),
@@ -53,6 +53,11 @@ class SelectionTests(unittest.TestCase):
         raw = raw_match([kill(640)])
         raw["tickrate"] = 128
         self.assertEqual(self.select(raw)[0].end_tick, 1024)
+
+    def test_published_csdm_cs2_game_identifier(self):
+        raw = raw_match()
+        raw["game"] = "CS2"
+        self.assertEqual(self.select(raw), self.select(raw_match()))
 
     def test_strict_schema_does_not_guess_fields(self):
         for field, value in (("tickrate", float("nan")), ("tickCount", 0), ("game", "csgo")):

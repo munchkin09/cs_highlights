@@ -24,7 +24,7 @@ El instalador prepara Python 3.12, FFmpeg/ffprobe, PostgreSQL 17 y CS Demo Manag
 ./scripts/steamos.sh run
 ```
 
-Los lanzadores preparan el entorno y arrancan la base automáticamente. La instalación no necesita `sudo`, no desactiva la protección de escritura de SteamOS y no usa la `.venv` copiada de otro equipo. Steam y CS2 se instalan desde Steam. Consulta la guía para parar PostgreSQL, repetir la instalación y resolver fallos. **La captura real en SteamOS sigue pendiente de validación.**
+Los lanzadores preparan el entorno y arrancan la base automáticamente. La instalación no necesita `sudo`, no desactiva la protección de escritura de SteamOS y no usa la `.venv` copiada de otro equipo. Steam y CS2 se instalan desde Steam. Consulta la guía para parar PostgreSQL, repetir la instalación y resolver fallos. **Prueba real en SteamOS completada:** descarga de ocho demos, análisis y captura de ocho segundos en 1080p60 con H.264/AAC. Queda pendiente escuchar el vídeo para comprobar la sincronización del audio.
 
 ## Preparar el PC Linux
 
@@ -81,7 +81,7 @@ python scripts/smoke_linux.py --config config.toml /ruta/partida.dem
 
 El resultado y `validation.json` quedan en `data/smoke/<id>/`. Abre el MP4 y comprueba que muestra tu perspectiva, la baja seleccionada y el audio sincronizado. ffprobe comprueba automáticamente formato, codecs, resolución, fps y duraciones; no puede verificar visualmente la cámara o el contenido. Después usa `run` para generar los resúmenes completos.
 
-**Estado de validación:** las pruebas automatizadas usan datos de partida sintéticos y dobles de CS Demo Manager. La prueba de FFmpeg sí genera y une MP4 reales. La descarga, el parseo y la captura con una partida real de Steam **no se han validado en este entorno macOS**. No hay una demo real incluida ni un vídeo de juego generado.
+**Estado de validación (17 de octubre de 2026):** 58 pruebas automatizadas correctas. En una Steam Machine con SteamOS se han descargado ocho demos de Valve, analizado una partida real de Nuke y generado un MP4 de ocho segundos, 1920×1080 a 60 fps, H.264/AAC. Se ha revisado un fotograma con la perspectiva del jugador; queda pendiente reproducir el vídeo para comprobar movimiento y sincronización del audio. Los resultados locales están en `data/smoke/` y no se incluyen en Git. El 18 de octubre se completó además un resumen de Nuke con nueve clips de ocho segundos, unidos y validados automáticamente.
 
 ## Selección y vídeo
 
@@ -89,8 +89,11 @@ El resultado y `validation.json` quedan en `data/smoke/<id>/`. Abre el MP4 y com
 - Se excluyen bajas de compañeros, suicidios, espectadores y eventos fuera de rondas jugables, incluido calentamiento.
 - Ventana predeterminada: 5 segundos antes y 3 después. Se limita al final del freeze time y al final oficial de la ronda; si falta este último, al final de la ronda. Los intervalos que se tocan o solapan se fusionan dentro de la misma ronda.
 - Los intervalos están expresados en ticks, con final exclusivo. Se conserva el tick del evento incluso con margen posterior cero.
+- Los clutches ganados de 1 contra 2, 3, 4 o 5 se incluyen desde el inicio del clutch hasta la resolución de la ronda, con los márgenes configurados. También se incluyen si se ganan sin bajas; se excluyen los perdidos y los 1 contra 1.
+- Si una baja propia contra un enemigo precede a un defuse propio en la misma ronda, se prolonga el clip de la última baja hasta completar la desactivación y su margen posterior. No se añaden defuses aislados ni de compañeros. Los bloques solapados se fusionan.
 - Salida: H.264/AAC en MP4, 1080p60, HUD normal, audio de juego, sin voces ni rayos X. La cámara sigue a tu jugador; después de su muerte depende del comportamiento espectador de CS2.
 - Cada clip se graba por separado y los clips se unen cronológicamente. En Linux la captura genera imágenes y audio sin comprimir; puede necesitar varios GiB por clip. Se comprueba espacio tanto en CS2 como en la salida y se reserva margen para la copia. La velocidad depende del equipo.
+- Las jugadas largas se capturan en tramos equilibrados de hasta diez segundos, sin huecos entre sus ticks, y se concatenan para conservar el bloque completo con un uso acotado de temporales. `intervals.json` distingue las jugadas (`intervals`) de los tramos (`capture_segments`). La selección nueva usa `pipeline_version=2`: al volver a procesar crea otra variante y conserva los vídeos anteriores. Un proceso ya iniciado conserva la selección con la que arrancó.
 
 ## Archivos y recuperación
 
@@ -107,7 +110,7 @@ data/
     demo.dem.info                  # si la entrada lo tenía
     <huella-configuración>/
       raw.json                    # exportación original de CS Demo Manager
-      analysis.json               # contrato normalizado, schema_version=1
+      analysis.json               # contrato normalizado, schema_version=2
       intervals.json              # decisiones de selección
       manifest.json               # estado, versiones y hashes
       clips/0001.mp4

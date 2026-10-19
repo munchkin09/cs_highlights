@@ -1,5 +1,6 @@
 from contextlib import redirect_stderr, redirect_stdout
 import io
+import signal
 from pathlib import Path
 import tempfile
 import unittest
@@ -62,3 +63,15 @@ class CLITests(unittest.TestCase):
             code = main(["--config", str(self.root / "missing.toml"), "doctor"])
         self.assertEqual(code, 1)
         self.assertIn("config.example.toml", self.output.getvalue())
+
+    def test_sigterm_reason_is_reported(self):
+        import os
+
+        def terminated(*args):
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        with (patch("cs_highlights.cli.prerequisites", side_effect=terminated),
+              redirect_stderr(self.output)):
+            code = main(["--config", str(self.path), "doctor"])
+        self.assertEqual(code, 130)
+        self.assertIn("SIGTERM", self.output.getvalue())

@@ -42,20 +42,25 @@ def main():
             if args.demo:
                 demos = [args.demo]
             else:
+                print("Descargando las partidas disponibles de Steam… (puede tardar varios minutos)", flush=True)
                 demos, failed = discover_and_download(backend)
+                print(f"Demos disponibles: {len(demos)}. Registro: {c.data_dir / 'downloads/download.log'}", flush=True)
                 if failed:
                     print("Algunas descargas fallaron; se intentará grabar una de las disponibles.")
             for source in demos:
+                print(f"Analizando {source.name}…", flush=True)
                 checksum, demo = import_demo(source, c)
                 folder = c.data_dir / "smoke" / uuid.uuid4().hex
                 raw = backend.export(demo, folder / "export", folder / "analysis.log")
                 analysis = normalize(read_json(raw))
                 intervals = select_kills(analysis, c.steam_id, c.before_seconds, c.after_seconds)
                 if not intervals:
+                    print("Sin bajas seleccionables; probando la siguiente demo.", flush=True)
                     continue
                 interval = intervals[0]
                 # Center the short test on its first kill, even if the configured pre-roll is long.
-                start = max(interval.start_tick, interval.kill_ticks[0] - int(5 * analysis.tickrate))
+                focus_tick = interval.kill_ticks[0] if interval.kill_ticks else interval.start_tick
+                start = max(interval.start_tick, focus_tick - int(5 * analysis.tickrate))
                 interval = replace(interval, start_tick=start,
                                    end_tick=min(interval.end_tick, start + int(10 * analysis.tickrate)))
                 duration = (interval.end_tick - interval.start_tick) / analysis.tickrate

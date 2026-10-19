@@ -22,8 +22,12 @@ class RunnerTests(unittest.TestCase):
             self.assertIn(text, log.read_text())
 
     def test_timeout_stops_owned_process(self):
-        with self.assertRaisesRegex(HighlightsError, "Tiempo agotado"):
-            Runner().run([sys.executable, "-c", "import time; time.sleep(60)"], timeout=1)
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / "timeout.log"
+            with self.assertRaisesRegex(HighlightsError, "Tiempo agotado"):
+                Runner().run([sys.executable, "-c", "import time; print('recording started', flush=True); time.sleep(60)"],
+                             timeout=1, log=log)
+            self.assertIn("recording started", log.read_text())
 
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg/ffprobe no instalados")

@@ -23,10 +23,14 @@ Los subprocesos reciben listas de argumentos sin shell. La opción FFmpeg que em
 
 Se usa el contrato de `src/common/types/{match,round,kill,match-player}.ts` y `src/node/json/export-matches-to-json.ts` de CS Demo Manager:
 
-- Match: `game="cs2"`, `checksum`, `tickrate`, `tickCount`, `mapName`, `date`, `players`, `rounds`, `kills`.
+- Match: `game="CS2"` en la exportación real de v3.20.1 (también se acepta `"cs2"`), `checksum`, `tickrate`, `tickCount`, `mapName`, `date`, `players`, `rounds`, `kills`.
 - Player: `steamId` como string y `name`.
 - Round: `number`, `startTick`, `freezetimeEndTick`, `endTick`, `endOfficiallyTick`.
 - Kill: `tick`, `roundNumber`, `killerSteamId`, `victimSteamId`, `killerSide`, `victimSide`, `weaponName`, `isHeadshot`.
+- Clutch (`clutches`): `tick` de inicio, `roundNumber`, `clutcherSteamId`, `opponentCount`, `won` booleano. Se seleccionan los ganados por el jugador con 2–5 rivales hasta `round.endTick`, con margen posterior limitado por el final oficial.
+- Defuse (`bombsDefused`): `tick` de desactivación completada, `roundNumber`, `defuserSteamId`. Prolonga la última baja seleccionable del jugador anterior al defuse en esa misma ronda. Si faltan las listas opcionales de objetivos, se mantiene la selección de bajas disponible.
+
+El análisis normalizado usa `schema_version=2` e incluye `clutches`, `defuses` y `rounds[].outcome_tick`. La huella de salida usa `pipeline_version=2` para conservar las variantes anteriores. Las jugadas se dividen para captura en segmentos de hasta diez segundos que cubren exactamente los ticks seleccionados; después se concatenan. Esta selección se ha contrastado con los JSON reales de dudu, incluidos dos clutches ganados y dos rondas adicionales con baja y defuse; la nueva captura segmentada todavía no se ha comprobado con CS2 porque el lote anterior sigue activo.
 
 No se adivinan campos alternativos ni se supone tickrate=64 si falta el dato. Una exportación incompatible falla antes de guardarse como análisis reutilizable. Los datos originales se conservan completos.
 
@@ -36,4 +40,4 @@ Antes de lanzar el renderizador se comprueba que `paths.cs2_dir` coincide con la
 
 ## Validación pendiente
 
-El manifiesto conserva versiones de Python, CLI, PostgreSQL, FFmpeg/ffprobe y `steam.inf` si está disponible. `environment.json` es un diagnóstico, no un certificado de aceptación. `scripts/smoke_linux.py` genera un informe de la prueba real, con revisión visual pendiente. Falta ejecutar esa prueba en el PC Linux del usuario y verificar una partida completa con todas sus bajas.
+El manifiesto conserva versiones de Python, CLI, PostgreSQL, FFmpeg/ffprobe y `steam.inf` si está disponible. `environment.json` es un diagnóstico, no un certificado de aceptación. `scripts/smoke_linux.py` genera un informe de la prueba real, con revisión visual pendiente. La prueba corta se completó el 17 de octubre de 2026 en SteamOS. El 18 de octubre se generó un resumen completo de Nuke con los nueve intervalos seleccionados y se validó su concatenación automáticamente. Queda pendiente la revisión audiovisual completa.

@@ -34,7 +34,7 @@ def main(argv=None) -> int:
     args = parser().parse_args(argv)
 
     def interrupted(signum, frame):
-        raise KeyboardInterrupt
+        raise KeyboardInterrupt(f"Recibida señal {signal.Signals(signum).name}")
 
     previous = signal.signal(signal.SIGTERM, interrupted)
     try:
@@ -86,8 +86,8 @@ def main(argv=None) -> int:
     except (HighlightsError, OSError) as exc:
         print(f"ERROR · {exc}", file=sys.stderr)
         return 1
-    except KeyboardInterrupt:
-        print("Interrumpido. Los clips validados se conservan. Un trabajo enviado a CS Demo Manager "
+    except KeyboardInterrupt as exc:
+        print(f"Interrumpido{': ' + str(exc) if str(exc) else ''}. Los clips validados se conservan. Un trabajo enviado a CS Demo Manager "
               "puede seguir activo: revisa su cola antes de reanudar.", file=sys.stderr)
         return 130
     finally:

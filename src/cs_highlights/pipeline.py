@@ -1,4 +1,5 @@
 import os
+from dataclasses import replace
 from pathlib import Path
 import shutil
 import uuid
@@ -11,6 +12,22 @@ from .errors import HighlightsError
 from .selection import select_kills
 from .storage import file_hash, now, read_json, write_json
 from .video import check_space, concatenate, validate_video
+
+
+def capture_segments(intervals, tickrate: float):
+    """Bound temporary raw frames while preserving every tick of a selected play."""
+    limit = max(1, int(10 * tickrate))
+    segments = []
+    for interval in intervals:
+        length = interval.end_tick - interval.start_tick
+        count = (length + limit - 1) // limit
+        # Balance the pieces so a long play never ends in a sub-frame tail.
+        for index in range(count):
+            start = interval.start_tick + length * index // count
+            end = interval.start_tick + length * (index + 1) // count
+            segments.append(replace(interval, start_tick=start, end_tick=end,
+                                    kill_ticks=tuple(t for t in interval.kill_ticks if start <= t < end)))
+    return segments
 
 
 def import_demo(source: Path, config: Config) -> tuple[str, Path]:
@@ -96,10 +113,12 @@ class Pipeline:
             save(stage)
             intervals = select_kills(analysis, self.config.steam_id,
                                      self.config.before_seconds, self.config.after_seconds)
+            segments = capture_segments(intervals, analysis.tickrate)
             write_json(job / "intervals.json", {"schema_version": 1, "tickrate": analysis.tickrate,
-                                              "intervals": [i.to_dict() for i in intervals]})
+                                              "intervals": [i.to_dict() for i in intervals],
+                                              "capture_segments": [i.to_dict() for i in segments]})
             if not intervals:
-                manifest.update(status="no_highlights", reason="No hay bajas contra enemigos en rondas válidas.")
+                manifest.update(status="no_highlights", reason="No hay bajas contra enemigos ni clutches ganados seleccionables.")
                 save("done")
                 self.report(f"Sin vídeo: {manifest['reason']} ({source.name})")
                 return None
@@ -109,7 +128,9 @@ class Pipeline:
             expected_duration = 0.0
             stage = "render"
             save(stage)
-            for index, interval in enumerate(intervals, 1):
+            self.report(f"{len(intervals)} jugadas en {len(segments)} tramos de hasta 10 s. CS2 se cierra entre clips; "
+                        "después se convierte cada grabación y al final se unen todas.")
+            for index, interval in enumerate(segments, 1):
                 name = f"{index:04d}"
                 clip = job / "clips" / f"{name}.mp4"
                 duration = (interval.end_tick - interval.start_tick) / analysis.tickrate
@@ -117,10 +138,10 @@ class Pipeline:
                 record = manifest["clips"].get(name)
                 if clip.exists() and record and file_hash(clip) == record.get("sha256"):
                     validate_video(clip, duration, self.config, self.runner)
-                    self.report(f"Clip {index}/{len(intervals)} ya validado")
+                    self.report(f"Clip {index}/{len(segments)} ya validado")
                     clips.append(clip)
                     continue
-                self.report(f"Clip {index}/{len(intervals)}: ronda {interval.round_number}, {duration:.1f} s")
+                self.report(f"Clip {index}/{len(segments)}: ronda {interval.round_number}, {duration:.1f} s")
                 # A disconnected CLI can leave a job running in CSDM's daemon.
                 self.csdm.assert_idle()
                 attempts = manifest["attempts"].setdefault(name, [])
@@ -169,7 +190,7 @@ class Pipeline:
             return output
         except (HighlightsError, OSError, ValueError, KeyboardInterrupt) as exc:
             manifest.update(status="interrupted" if isinstance(exc, KeyboardInterrupt) else "failed",
-                            error={"stage": stage, "message": str(exc) or "Interrumpido por el usuario"})
+                            error={"stage": stage, "message": str(exc) or "Interrumpido (Ctrl+C o señal de terminación)"})
             save(stage)
             if isinstance(exc, KeyboardInterrupt):
                 raise
