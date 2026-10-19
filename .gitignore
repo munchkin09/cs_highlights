@@ -6,5 +6,6 @@ build/
 dist/
 config.toml
 config.steamos.toml
+config.local.toml
 data/
 .coverage

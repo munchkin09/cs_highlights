@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 
 from .errors import HighlightsError
+from . import platforms
 
 
 @dataclass(frozen=True)
@@ -24,9 +25,13 @@ class Runner:
             log.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryFile() as stdout, (log.open("a+b") if log else tempfile.TemporaryFile()) as stderr:
             stderr_start = stderr.tell()
+            windows = platforms.system() == "Windows"
+            if windows and Path(argv[0]).suffix.lower() in {".bat", ".cmd"}:
+                raise HighlightsError("No se ejecutan scripts de cmd.exe directamente; configura un ejecutable nativo.")
+            options = {"creationflags": 0x00000200} if windows else {"start_new_session": True}
             try:
                 process = subprocess.Popen(argv, stdout=stdout, stderr=stderr, stdin=subprocess.DEVNULL,
-                                           cwd=cwd, env=env, start_new_session=True)
+                                           cwd=cwd, env=env, **options)
             except OSError as exc:
                 raise HighlightsError(f"No se pudo ejecutar {argv[0]}: {exc}") from exc
 
@@ -46,13 +51,25 @@ class Runner:
             except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
                 # The CSDM daemon is separate; its queued recording may continue.
                 # The next render checks the daemon queue before launching anything.
-                try:
-                    os.killpg(process.pid, signal.SIGINT)
-                    process.wait(timeout=10)
-                except (ProcessLookupError, subprocess.TimeoutExpired):
-                    if process.poll() is None:
-                        os.killpg(process.pid, signal.SIGKILL)
+                if windows:
+                    # Target only our PID and descendants, never all CS2/Electron processes.
+                    try:
+                        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+                    except (OSError, subprocess.TimeoutExpired):
+                        pass
+                    finally:
+                        if process.poll() is None:
+                            process.kill()
                         process.wait()
+                else:
+                    try:
+                        os.killpg(process.pid, signal.SIGINT)
+                        process.wait(timeout=10)
+                    except (ProcessLookupError, subprocess.TimeoutExpired):
+                        if process.poll() is None:
+                            os.killpg(process.pid, signal.SIGKILL)
+                            process.wait()
                 # Preserve the recording/conversion diagnostics even when interrupted.
                 read_output()
                 if isinstance(exc, KeyboardInterrupt):

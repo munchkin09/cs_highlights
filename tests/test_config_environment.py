@@ -9,6 +9,7 @@ from cs_highlights.environment import assert_raw_dirs_empty, csdm_game_dir, pars
 from cs_highlights.errors import HighlightsError
 from cs_highlights.storage import exclusive_lock, read_json, write_json
 from cs_highlights.video import check_space
+from cs_highlights import platforms
 from helpers import PLAYER, config
 
 
@@ -53,7 +54,12 @@ class ConfigEnvironmentTests(unittest.TestCase):
 
     def test_symlink_scratch_rejected(self):
         c = config(self.root)
-        c.raw_dirs[0].symlink_to(self.root, target_is_directory=True)
+        try:
+            c.raw_dirs[0].symlink_to(self.root, target_is_directory=True)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 1314:
+                self.skipTest("Windows requires developer mode or permission to create symbolic links")
+            raise
         with self.assertRaises(HighlightsError):
             assert_raw_dirs_empty(c)
 
@@ -71,7 +77,8 @@ class ConfigEnvironmentTests(unittest.TestCase):
 
     def test_custom_game_path_matches_csdm(self):
         c = config(self.root)
-        executable = c.cs2_dir / "game/cs2.sh"
+        executable = c.cs2_dir / ("game/bin/win64/cs2.exe" if platforms.system() == "Windows" else "game/cs2.sh")
+        executable.parent.mkdir(parents=True, exist_ok=True)
         executable.write_text("#!/bin/sh")
         settings = {"playback": {"customCs2LocationEnabled": True, "cs2ExecutablePath": str(executable)}}
         self.assertEqual(csdm_game_dir(settings), c.cs2_dir)

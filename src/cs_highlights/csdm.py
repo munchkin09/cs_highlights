@@ -1,10 +1,12 @@
 import json
+import os
 from pathlib import Path
 import shutil
 
 from .commands import Runner
 from .config import Config
 from .errors import HighlightsError
+from . import platforms
 
 
 def json_result(output: str, operation: str) -> dict:
@@ -24,21 +26,35 @@ class CSDM:
         self.runner = runner
         self._modern = None
 
+    def run(self, arguments: list[str], **kwargs):
+        argv, env = platforms.csdm_invocation(self.config.csdm, arguments)
+        env = dict(os.environ if env is None else env)
+        # CSDM also launches psql itself; an explicit tool path must work off PATH.
+        directories = []
+        for tool in (self.config.psql, self.config.ffmpeg, self.config.ffprobe):
+            resolved = shutil.which(tool)
+            if resolved:
+                directory = str(Path(resolved).resolve().parent)
+                if directory not in directories:
+                    directories.append(directory)
+        env["PATH"] = os.pathsep.join([*directories, env.get("PATH", "")])
+        kwargs["env"] = env
+        return self.runner.run(argv, **kwargs)
+
     @property
     def modern(self) -> bool:
         if self._modern is None:
-            output = self.runner.run([self.config.csdm, "dl-valve", "--help"], timeout=20).stdout
+            output = self.run(["dl-valve", "--help"], timeout=20).stdout
             self._modern = "--json" in output
         return self._modern
 
     def assert_idle(self) -> None:
-        running = self.runner.run(["pgrep", "-x", "cs2"], timeout=5, check=False)
-        if running.returncode != 1:
+        if platforms.process_running("cs2", self.runner):
             raise HighlightsError("CS2 está abierto o no se puede comprobar su estado. Ciérralo antes de grabar.")
         # v3.20.1 renders in the CLI process; newer builds delegate to a daemon queue.
         if not self.modern:
             return
-        result = self.runner.run([self.config.csdm, "video", "list", "--json"], timeout=60)
+        result = self.run(["video", "list", "--json"], timeout=60)
         data = json_result(result.stdout, "video list")
         videos = data.get("videos")
         if not isinstance(videos, list) or any(not isinstance(v, dict) or "status" not in v for v in videos):
@@ -49,7 +65,7 @@ class CSDM:
 
     def export(self, demo: Path, destination: Path, log: Path) -> Path:
         destination.mkdir(parents=True, exist_ok=True)
-        self.runner.run([self.config.csdm, "json", str(demo), "--output-folder", str(destination),
+        self.run(["json", str(demo), "--output-folder", str(destination),
                          "--source", "valve"], log=log, timeout=self.config.timeout_seconds)
         files = list(destination.glob("*.json"))
         if len(files) != 1:
@@ -62,8 +78,8 @@ class CSDM:
         ffmpeg = shutil.which(c.ffmpeg)
         if not ffmpeg:
             raise HighlightsError(f"No se encuentra FFmpeg: {c.ffmpeg}")
-        self.runner.run([
-            c.csdm, "video", str(demo), str(interval.start_tick), str(interval.end_tick),
+        self.run([
+            "video", str(demo), str(interval.start_tick), str(interval.end_tick),
             "--output", str(output), "--recording-system", "CS",
             # Keep raw files in our private attempt folder until ffprobe validates the MP4.
             "--recording-output", "images-and-video", "--encoder-software", "FFmpeg",

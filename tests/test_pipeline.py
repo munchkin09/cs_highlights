@@ -1,6 +1,7 @@
 from dataclasses import replace
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 
@@ -130,6 +131,31 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(self.manifest()["status"], "no_highlights")
         self.assertEqual(self.backend.renders, 0)
 
+    def test_analysis_without_game_can_later_resume_capture(self):
+        shutil.rmtree(self.c.cs2_dir)
+        analysis_only = replace(self.c, cs2_dir=None)
+        backend = FakeCSDM(analysis_only)
+        result = Pipeline(analysis_only, backend, report=lambda _: None).process(self.demo, analysis_only=True)
+        self.assertTrue(result.is_file())
+        selection = read_json(result.parent / "intervals.json")
+        self.assertEqual(len(selection["capture_segments"]), 4)
+        self.assertTrue(all((clip["end_tick"] - clip["start_tick"]) / selection["tickrate"] <= 10
+                            for clip in selection["capture_segments"]))
+        self.assertEqual(backend.renders, 0)
+        self.assertEqual(self.manifest()["status"], "analyzed")
+        (self.c.cs2_dir / "game/csgo").mkdir(parents=True)
+        output = self.pipeline.process(self.demo)
+        self.assertTrue(output.is_file())
+        self.assertEqual(self.backend.exports, 0)
+        self.assertEqual(self.manifest()["status"], "complete")
+
+    def test_analysis_keeps_a_completed_video_reusable(self):
+        output = self.pipeline.process(self.demo)
+        self.pipeline.process(self.demo, analysis_only=True)
+        self.assertEqual(self.manifest()["status"], "complete")
+        self.assertEqual(self.pipeline.process(self.demo), output)
+        self.assertEqual((self.backend.exports, self.backend.renders), (1, 4))
+
     def test_invalid_analysis_does_not_poison_raw_cache(self):
         self.backend.raw = {"wrong": "schema"}
         with self.assertRaises(HighlightsError):
@@ -190,6 +216,8 @@ class QueueContractTests(unittest.TestCase):
             def run(self, argv, **kwargs):
                 if argv[0] == "pgrep":
                     return Result(1, "")
+                if argv[0] == "tasklist":
+                    return Result(0, '"steam.exe","123","Console","1","100 K"\n')
                 if "--help" in argv:
                     return Result(0, "--json")
                 return Result(0, json.dumps({"isPaused": True, "videos": [{"status": "pending"}]}))
@@ -203,6 +231,8 @@ class QueueContractTests(unittest.TestCase):
             def run(self, argv, **kwargs):
                 if argv[0] == "pgrep":
                     return Result(1, "")
+                if argv[0] == "tasklist":
+                    return Result(0, '"steam.exe","123","Console","1","100 K"\n')
                 if "--help" in argv:
                     return Result(0, "--output")
                 raise AssertionError(argv)

@@ -1,10 +1,16 @@
 # CS Highlights
 
-PoC local para Linux: descubre tus partidas de Valve, descarga las demos, extrae sus datos y genera **un MP4 con todas tus bajas por partida**. Python coordina CS Demo Manager y FFmpeg; no hay servicios web ni dependencias Python de ejecución.
+PoC local: descarga y analiza demos en Windows, macOS y Linux, y genera **un MP4 con tus highlights por partida en Windows o Linux**. Python coordina CS Demo Manager y FFmpeg; no hay servicios web ni dependencias Python de ejecución. macOS permite analizar y descargar, pero no capturar CS2, que no tiene versión nativa para ese sistema.
 
 ```text
 Steam → CS Demo Manager → demo + análisis JSON → intervalos → CS2 → clips → MP4
 ```
+
+## Windows, macOS y Linux
+
+La [guía multiplataforma](docs/platforms.md) explica las dependencias externas y la configuración de cada sistema. Tras instalarlas, `python scripts/install.py` prepara la CLI y `config.local.toml`; `python scripts/run.py doctor` comprueba el entorno. Usa `py -3.12` en Windows o `python3.12` en macOS/Linux como intérprete.
+
+Los comandos `analyze DEMO` y `download` funcionan sin CS2 instalado. `process DEMO` y `run` requieren el juego en Windows/Linux. En SteamOS utiliza los scripts del siguiente apartado.
 
 ## Steam Machine con SteamOS
 
@@ -61,7 +67,7 @@ cs-highlights --config config.toml run
 cs-highlights --config config.toml process /ruta/partida.dem
 ```
 
-Sin `--config`, se usa `config.toml` del directorio actual o `$XDG_CONFIG_HOME/cs-highlights/config.toml` (por defecto `~/.config/cs-highlights/config.toml`). `--config` debe ir antes del subcomando.
+Sin `--config`, la CLI directa usa `config.toml` del directorio actual o `cs-highlights/config.toml` dentro de la carpeta de configuración del usuario: `$XDG_CONFIG_HOME` (por defecto `~/.config`) en Linux, `~/Library/Application Support` en macOS y `%LOCALAPPDATA%` en Windows. `--config` debe ir antes del subcomando. El lanzador `scripts/run.py` usa `config.local.toml` del repositorio.
 
 `doctor` comprueba ejecutables, opciones compatibles de la CLI, PostgreSQL autenticado, Steam abierto, CS2 cerrado, sesión gráfica, rutas y escritura. Guarda `data/environment.json` con versiones y diagnósticos, sin credenciales. Detectar el proceso de Steam no garantiza una sesión autenticada; el acceso al Game Coordinator se comprueba al descargar.
 
