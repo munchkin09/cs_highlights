@@ -47,7 +47,7 @@ class Pipeline:
         self.versions = versions or {}
         self.report = report
 
-    def process(self, source: Path) -> Path | None:
+    def process(self, source: Path, *, analysis_only: bool = False) -> Path | None:
         checksum, demo = import_demo(source, self.config)
         job = demo.parent / self.config.fingerprint
         job.mkdir(parents=True, exist_ok=True)
@@ -73,11 +73,12 @@ class Pipeline:
         stage = "analysis"
         try:
             output = job / "highlights.mp4"
-            if manifest.get("status") == "complete" and output.exists():
+            if not analysis_only and manifest.get("status") == "complete" and output.exists():
                 if file_hash(output) == manifest.get("output_sha256"):
                     validate_video(output, manifest["expected_duration"], self.config, self.runner)
                     self.report(f"Ya completo: {output}")
                     return output
+            previous_status = manifest.get("status")
             manifest["status"] = "running"
             save(stage)
             raw = job / "raw.json"
@@ -98,6 +99,13 @@ class Pipeline:
                                      self.config.before_seconds, self.config.after_seconds)
             write_json(job / "intervals.json", {"schema_version": 1, "tickrate": analysis.tickrate,
                                               "intervals": [i.to_dict() for i in intervals]})
+            if analysis_only:
+                # Keep a completed capture reusable; analysis never deletes/revalidates its media.
+                manifest["status"] = previous_status if previous_status == "complete" else "analyzed"
+                manifest["analysis_completed_at"] = now()
+                save("done")
+                self.report(f"Análisis e intervalos: {job}")
+                return job / "analysis.json"
             if not intervals:
                 manifest.update(status="no_highlights", reason="No hay bajas contra enemigos en rondas válidas.")
                 save("done")

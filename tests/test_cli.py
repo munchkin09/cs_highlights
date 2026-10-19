@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from cs_highlights.cli import main
 from cs_highlights.errors import HighlightsError
+from cs_highlights import platforms
 from helpers import PLAYER, config
 
 
@@ -62,3 +63,22 @@ class CLITests(unittest.TestCase):
             code = main(["--config", str(self.root / "missing.toml"), "doctor"])
         self.assertEqual(code, 1)
         self.assertIn("config.example.toml", self.output.getvalue())
+
+    def test_analyze_skips_capture_locks_and_idle_checks(self):
+        self.path.write_text(f'[player]\nsteam_id="{PLAYER}"\n[paths]\ndata_dir="data"\n')
+        with (patch("cs_highlights.cli.prerequisites", return_value=([], {})) as prerequisites,
+              patch("cs_highlights.cli.CSDM", autospec=True) as csdm,
+              patch("cs_highlights.cli.Pipeline") as pipeline, redirect_stdout(self.output)):
+            self.assertEqual(main(["--config", str(self.path), "analyze", "demo.dem"]), 0)
+        prerequisites.assert_called_once()
+        self.assertEqual(prerequisites.call_args.kwargs["mode"], "analysis")
+        csdm.return_value.assert_idle.assert_not_called()
+        pipeline.return_value.process.assert_called_once_with(Path("demo.dem"), analysis_only=True)
+
+    def test_mac_doctor_defaults_to_analysis_and_can_explicitly_check_capture(self):
+        for requested, expected in (([], "analysis"), (["--mode", "capture"], "capture")):
+            with (patch.object(platforms, "system", return_value="Darwin"),
+                  patch("cs_highlights.cli.prerequisites", return_value=([], {})) as prerequisites,
+                  patch("cs_highlights.cli.CSDM", autospec=True), redirect_stdout(self.output)):
+                self.assertEqual(main(["--config", str(self.path), "doctor", *requested]), 0)
+                self.assertEqual(prerequisites.call_args.kwargs["mode"], expected)

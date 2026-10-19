@@ -2,19 +2,19 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 import math
-import os
 from pathlib import Path
 import re
 import tomllib
 
 from .errors import HighlightsError
+from . import platforms
 
 
 @dataclass(frozen=True)
 class Config:
     steam_id: str
     data_dir: Path
-    cs2_dir: Path
+    cs2_dir: Path | None
     csdm_settings: Path
     csdm: str = "csdm"
     ffmpeg: str = "ffmpeg"
@@ -40,6 +40,8 @@ class Config:
 
     @property
     def raw_dirs(self) -> tuple[Path, Path]:
+        if self.cs2_dir is None:
+            raise HighlightsError("Falta paths.cs2_dir para capturar vídeo.")
         root = self.cs2_dir / "game" / "csgo"
         return root / "movie", root / "csdm" / "movie"
 
@@ -65,23 +67,26 @@ def load_config(path: Path) -> Config:
     steam_id = flat.get("steam_id")
     if not isinstance(steam_id, str) or not re.fullmatch(r"[0-9]{17}", steam_id):
         raise HighlightsError("player.steam_id debe ser un SteamID64 de 17 dígitos entre comillas.")
-    for name in ("data_dir", "cs2_dir"):
+    for name in ("data_dir",):
         if name not in flat:
             raise HighlightsError(f"Falta paths.{name}.")
-    config_home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    flat.setdefault("csdm_settings", str(config_home / "csdm" / "settings.json"))
+    flat.setdefault("cs2_dir", None)
+    flat.setdefault("csdm_settings", str(platforms.csdm_settings_path()))
     for name in ("data_dir", "cs2_dir", "csdm_settings"):
         value = flat[name]
+        if name == "cs2_dir" and value is None:
+            continue
         if not isinstance(value, str) or not value.strip():
             raise HighlightsError(f"{name} debe ser una ruta no vacía.")
         value = Path(value).expanduser()
         flat[name] = (path.parent / value).resolve()
     for name in sections["tools"]:
+        flat.setdefault(name, platforms.default_tool(name))
         if name in flat:
             value = flat[name]
             if not isinstance(value, str) or not value.strip() or "\x00" in value:
                 raise HighlightsError(f"tools.{name} debe ser un ejecutable.")
-            if "/" in value:
+            if "/" in value or "\\" in value:
                 flat[name] = str((path.parent / Path(value).expanduser()).resolve())
     for name, maximum in (("before_seconds", 3600), ("after_seconds", 3600), ("reserve_gib", 1024)):
         if name in flat:
@@ -97,3 +102,32 @@ def load_config(path: Path) -> Config:
     if result.width % 2 or result.height % 2:
         raise HighlightsError("La resolución debe ser par para H.264/yuv420p.")
     return result
+
+
+def create_config(path: Path) -> None:
+    """Create an editable, platform-appropriate template without overwriting user settings."""
+    path = path.expanduser().resolve()
+    quote = lambda value: json.dumps(str(value), ensure_ascii=False)
+    lines = ['[player]', '# Sustituye este ejemplo por tu SteamID64, siempre entre comillas.',
+             'steam_id = "76561198000000000"', '', '[paths]', 'data_dir = "./data"']
+    if platforms.supports_capture():
+        from .environment import csdm_game_dir
+        try:
+            game = csdm_game_dir({})
+        except HighlightsError:
+            game = platforms.steam_roots()[0] / "steamapps/common/Counter-Strike Global Offensive"
+        lines.extend(['# Revisa esta ruta y el mismo juego en Playback de CS Demo Manager.',
+                      f'cs2_dir = {quote(game)}'])
+    else:
+        lines.append('# macOS: análisis y descarga; la captura de CS2 requiere Windows o Linux.')
+    lines.extend([f'csdm_settings = {quote(platforms.csdm_settings_path())}', '', '[tools]'])
+    lines.extend(f'{name} = {quote(platforms.default_tool(name))}' for name in ("csdm", "ffmpeg", "ffprobe", "psql"))
+    lines.extend(['', '[selection]', 'before_seconds = 5.0', 'after_seconds = 3.0', '',
+                  '[video]', 'width = 1920', 'height = 1080', 'fps = 60', 'crf = 20', '',
+                  '[runtime]', 'timeout_seconds = 7200', 'reserve_gib = 2.0', ''])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("x", encoding="utf-8") as output:
+            output.write("\n".join(lines))
+    except FileExistsError as exc:
+        raise HighlightsError(f"Ya existe {path}; se conserva su configuración.") from exc

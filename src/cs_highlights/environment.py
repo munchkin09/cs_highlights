@@ -1,4 +1,4 @@
-"""Linux prerequisites and non-destructive checks of the CSDM integration."""
+"""Prerequisites for analysis, downloads, and native CS2 capture."""
 import os
 from pathlib import Path
 import platform
@@ -8,8 +8,10 @@ import tempfile
 
 from .commands import Runner
 from .config import Config
+from .csdm import CSDM
 from .errors import HighlightsError
 from .storage import read_json
+from . import platforms
 
 
 def parse_vdf(content: str) -> dict:
@@ -36,15 +38,11 @@ def csdm_game_dir(settings: dict) -> Path:
     playback = settings.get("playback", {})
     if playback.get("customCs2LocationEnabled"):
         executable = Path(playback.get("cs2ExecutablePath", "")).expanduser()
-        if executable.name != "cs2.sh" or not executable.is_file():
-            raise HighlightsError("Configura la ruta de CS2 en CS Demo Manager como game/cs2.sh.")
-        return executable.resolve().parent.parent
-    home = Path.home()
-    candidates = [home / ".steam/steam", home / "snap/steam/common/.local/share/Steam",
-                  home / ".local/share/steam"]
+        return platforms.game_root_from_executable(executable)
+    candidates = platforms.steam_roots()
     steam = next((p for p in candidates if p.exists()), candidates[-1])
     if "/snap/" in str(steam.resolve()) or "/.var/app/" in str(steam.resolve()):
-        raise HighlightsError("La PoC requiere Steam nativo, instalado mediante el gestor de paquetes.")
+        raise HighlightsError("La integración requiere Steam nativo; no admite Steam Flatpak ni Snap.")
     try:
         libraries = parse_vdf((steam / "steamapps/libraryfolders.vdf").read_text())["libraryfolders"]
         for item in libraries.values():
@@ -66,9 +64,13 @@ def assert_raw_dirs_empty(config: Config) -> None:
             raise HighlightsError(f"La carpeta temporal atraviesa un enlace simbólico: {path}")
 
 
-def prerequisites(config: Config, runner: Runner) -> tuple[list[dict], dict]:
+def prerequisites(config: Config, runner: Runner, *, mode: str = "capture") -> tuple[list[dict], dict]:
+    if mode not in {"capture", "analysis", "download"}:
+        raise ValueError(f"Unknown prerequisite mode: {mode}")
     checks = []
-    versions = {"python": platform.python_version(), "platform": platform.platform()}
+    versions = {"python": platform.python_version(), "platform": platform.platform(), "mode": mode}
+    backend = CSDM(config, runner)
+    capture = mode == "capture"
 
     def check(name, action):
         try:
@@ -81,30 +83,44 @@ def prerequisites(config: Config, runner: Runner) -> tuple[list[dict], dict]:
         if not condition:
             raise HighlightsError(message)
 
-    check("Linux", lambda: require(platform.system() == "Linux", "La captura de CS2 requiere Linux; "
-                                   "el análisis y las pruebas unitarias se pueden ejecutar aquí."))
-    check("Sesión gráfica", lambda: require(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"),
-                                           "Ejecuta la CLI desde tu escritorio Linux."))
-    for name in ("csdm", "ffmpeg", "ffprobe", "psql"):
+    check("Sistema operativo", lambda: require(platforms.system() in {"Linux", "Windows", "Darwin"},
+                                               "Se admiten Linux, Windows y macOS."))
+    if capture:
+        check("Captura CS2", lambda: require(platforms.supports_capture(),
+              "CS2 no tiene versión nativa para macOS. Usa analyze o download; "
+              "para grabar el MP4 se necesita Windows o Linux con CS2."))
+        if not platforms.supports_capture():
+            return checks, versions
+        if platforms.system() == "Linux":
+            check("Sesión gráfica", lambda: require(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"),
+                                                   "Ejecuta la CLI desde tu escritorio Linux."))
+        else:
+            check("Sesión gráfica", lambda: require(os.environ.get("SESSIONNAME") != "Services"
+                  and not os.environ.get("SSH_CONNECTION"), "Ejecuta la CLI desde tu escritorio Windows."))
+    tools = ("csdm", "ffmpeg", "ffprobe", "psql") if capture else ("csdm", "psql")
+    for name in tools:
         def executable(name=name):
             binary = getattr(config, name)
             require(shutil.which(binary), f"No se encuentra {binary}.")
             flag = "help" if name == "csdm" else "--version" if name == "psql" else "-version"
-            result = runner.run([binary, flag], timeout=15)
+            result = backend.run([flag], timeout=15) if name == "csdm" else runner.run([binary, flag], timeout=15)
             version = result.stdout.strip().splitlines()[0]
             versions[name] = version
             return version
         check(name, executable)
 
     def cli_contract():
-        for command, options in ((["dl-valve"], ["--output"]),
-                                 (["video"], ["--focus-player", "--recording-output", "--ffmpeg-input-parameters"]),
-                                 (["json"], ["--output-folder"])):
-            output = runner.run([config.csdm, *command, "--help"], timeout=20).stdout
+        commands = [(["json"], ["--output-folder"])]
+        if mode != "analysis":
+            commands.append((["dl-valve"], ["--output"]))
+        if capture:
+            commands.append((["video"], ["--focus-player", "--recording-output", "--ffmpeg-input-parameters"]))
+        for command, options in commands:
+            output = backend.run([*command, "--help"], timeout=20).stdout
             require(all(option in output for option in options),
                     "La versión de CS Demo Manager no ofrece las opciones de CLI requeridas. "
                     "Consulta docs/compatibility.md.")
-        return "Descarga, exportación JSON y renderizado disponibles"
+        return f"Opciones de CLI disponibles para {mode}"
     if shutil.which(config.csdm):
         check("Contrato CLI", cli_contract)
 
@@ -118,7 +134,9 @@ def prerequisites(config: Config, runner: Runner) -> tuple[list[dict], dict]:
     check("Configuración CS Demo Manager", load_settings)
 
     def game():
-        require((config.cs2_dir / "game/cs2.sh").is_file(), f"No existe game/cs2.sh en {config.cs2_dir}.")
+        require(config.cs2_dir is not None, "Falta paths.cs2_dir para capturar vídeo.")
+        executable = platforms.cs2_executable(config.cs2_dir)
+        require(executable.is_file(), f"No existe {executable}.")
         require(csdm_game_dir(settings) == config.cs2_dir.resolve(),
                 "paths.cs2_dir y la instalación usada por CS Demo Manager no coinciden.")
         require(os.access(config.cs2_dir / "game/csgo", os.W_OK), "No se puede escribir en game/csgo.")
@@ -126,18 +144,21 @@ def prerequisites(config: Config, runner: Runner) -> tuple[list[dict], dict]:
         if info.exists():
             versions["cs2"] = info.read_text().strip()
         return str(config.cs2_dir)
-    check("Instalación CS2", game)
-    check("Temporales CS2", lambda: assert_raw_dirs_empty(config))
+    if capture:
+        check("Instalación CS2", game)
+        check("Temporales CS2", lambda: assert_raw_dirs_empty(config))
 
     def csdm_ffmpeg():
         require(isinstance(settings.get("video"), dict), "Falta la configuración de vídeo de CS Demo Manager.")
         ff = settings["video"]["ffmpegSettings"]
         path = (Path(ff["customExecutableLocation"]) if ff.get("customLocationEnabled")
-                else config.csdm_settings.parent / "ffmpeg/bin/ffmpeg")
+                else config.csdm_settings.parent / "ffmpeg/bin" /
+                ("ffmpeg.exe" if platforms.system() == "Windows" else "ffmpeg"))
         require(path.is_file(), "Instala FFmpeg desde CS Demo Manager o configura su ubicación personalizada "
                 "en Settings > Video; no basta con pasarlo a la CLI.")
         return str(path)
-    check("FFmpeg registrado en CS Demo Manager", csdm_ffmpeg)
+    if capture:
+        check("FFmpeg registrado en CS Demo Manager", csdm_ffmpeg)
 
     def database():
         require(isinstance(settings.get("database"), dict), "Falta la conexión PostgreSQL de CS Demo Manager.")
@@ -161,8 +182,10 @@ def prerequisites(config: Config, runner: Runner) -> tuple[list[dict], dict]:
             pass
         return f"{config.data_dir} ({shutil.disk_usage(config.data_dir).free / 2**30:.1f} GiB libres)"
     check("Directorio de trabajo", writable)
-    check("Steam abierto", lambda: runner.run(["pgrep", "-x", "steam"], timeout=5) and
-          "Proceso encontrado; la autenticación se comprobará al descargar")
-    check("CS2 cerrado", lambda: require(runner.run(["pgrep", "-x", "cs2"], timeout=5, check=False).returncode == 1,
-                                        "Cierra CS2 antes de usar la PoC."))
+    if mode != "analysis":
+        check("Steam abierto", lambda: require(platforms.process_running("steam", runner),
+              "Abre Steam e inicia sesión; la autenticación se comprobará al descargar."))
+    if capture:
+        check("CS2 cerrado", lambda: require(not platforms.process_running("cs2", runner),
+                                            "Cierra CS2 antes de grabar."))
     return checks, versions

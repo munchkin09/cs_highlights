@@ -21,10 +21,10 @@ def discover_and_download(csdm: CSDM) -> tuple[list[Path], bool]:
         # CSDM checks existence only; these links suppress downloading the known complete demos.
         os.link(demo, staging / demo.name)
     log = root / "download.log"
-    argv = [csdm.config.csdm, "dl-valve", "--output", str(staging)]
+    argv = ["dl-valve", "--output", str(staging)]
     if csdm.modern:
         argv.append("--json")
-    result = csdm.runner.run(argv,
+    result = csdm.run(argv,
                              log=log, timeout=csdm.config.timeout_seconds, check=False)
     if csdm.modern:
         try:
