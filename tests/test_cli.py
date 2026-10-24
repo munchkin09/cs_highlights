@@ -87,6 +87,16 @@ class CLITests(unittest.TestCase):
         csdm.return_value.assert_idle.assert_not_called()
         pipeline.return_value.process.assert_called_once_with(Path("demo.dem"), analysis_only=True)
 
+    def test_analyze_deaths_dispatches_the_review_mode(self):
+        self.path.write_text(f'[player]\nsteam_id="{PLAYER}"\n[paths]\ndata_dir="data"\n')
+        with (patch("cs_highlights.cli.prerequisites", return_value=([], {})),
+              patch("cs_highlights.cli.CSDM", autospec=True),
+              patch("cs_highlights.cli.Pipeline") as pipeline,
+              redirect_stdout(self.output)):
+            self.assertEqual(main(["--config", str(self.path), "analyze", "--mode", "deaths", "demo.dem"]), 0)
+        pipeline.return_value.process.assert_called_once_with(
+            Path("demo.dem"), analysis_only=True, mode="deaths")
+
     def test_mac_doctor_defaults_to_analysis_and_can_explicitly_check_capture(self):
         for requested, expected in (([], "analysis"), (["--mode", "capture"], "capture")):
             with (patch.object(platforms, "system", return_value="Darwin"),

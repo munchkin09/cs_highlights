@@ -176,7 +176,7 @@ class PrerequisiteModesTests(unittest.TestCase):
 
     def run_tool(self, argv, **kwargs):
         if "--help" in argv:
-            return Result(0, "--output-folder --output --focus-player --recording-output --ffmpeg-input-parameters")
+            return Result(0, "--output-folder --output --focus-player --recording-output --ffmpeg-input-parameters --config-file")
         if "SHOW server_version_num" in argv:
             return Result(0, "170005\n")
         if argv[0] == "pgrep":

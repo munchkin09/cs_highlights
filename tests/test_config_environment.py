@@ -29,13 +29,41 @@ class ConfigEnvironmentTests(unittest.TestCase):
         self.assertNotEqual(c.fingerprint, replace(c, before_seconds=7).fingerprint)
         self.assertEqual(c.fingerprint, replace(c, data_dir=Path("/tmp/another")).fingerprint)
 
+    def test_death_margins_are_independent_and_output_has_its_own_fingerprint(self):
+        self.path.write_text(self.base + "[selection]\nbefore_seconds=5\nafter_seconds=3\n"
+                             "[deaths]\nbefore_seconds=10\nafter_seconds=3\n")
+        c = load_config(self.path)
+        self.assertEqual((c.before_seconds, c.death_before_seconds, c.death_after_seconds), (5, 10, 3))
+        self.assertNotEqual(c.fingerprint, c.fingerprint_for_mode("deaths"))
+        self.assertNotEqual(c.fingerprint_for_mode("deaths"),
+                            replace(c, death_before_seconds=20).fingerprint_for_mode("deaths"))
+        self.assertEqual(c.output_settings(), replace(c, death_before_seconds=20).output_settings())
+
+    def test_intro_duration_is_configurable_and_part_of_output_identity(self):
+        self.path.write_text(self.base + "[intro]\nduration_seconds = 4.5\n")
+        c = load_config(self.path)
+        self.assertEqual(c.intro_seconds, 4.5)
+        self.assertNotEqual(c.fingerprint, replace(c, intro_seconds=0).fingerprint)
+        self.assertNotEqual(c.fingerprint_for_mode("deaths"),
+                            replace(c, intro_seconds=0).fingerprint_for_mode("deaths"))
+
     def test_bad_values_rejected(self):
         for addition in ('[video]\nfps = 0', '[video]\nwidth = 801', '[video]\nfps = true',
                          '[selection]\nbefore_seconds = nan', '[selection]\nafter_seconds = -1',
-                         '[runtime]\nreserve_gib = inf', '[unknown]\nx = 1'):
+                         '[runtime]\nreserve_gib = inf', '[runtime]\ncapture_batch_size = 0',
+                         '[runtime]\ncapture_batch_size = true', '[runtime]\ncapture_batch_size = 33',
+                         '[unknown]\nx = 1'):
             self.path.write_text(self.base + addition)
             with self.subTest(addition=addition), self.assertRaises(HighlightsError):
                 load_config(self.path)
+
+    def test_batch_size_defaults_to_four_and_does_not_invalidate_existing_clips(self):
+        self.path.write_text(self.base)
+        c = load_config(self.path)
+        self.assertEqual(c.capture_batch_size, 4)
+        for mode in ("highlights", "deaths"):
+            self.assertEqual(c.fingerprint_for_mode(mode),
+                             replace(c, capture_batch_size=1).fingerprint_for_mode(mode))
 
     def test_missing_or_numeric_steam_id_rejected(self):
         self.path.write_text(self.base.replace(f'"{PLAYER}"', PLAYER))

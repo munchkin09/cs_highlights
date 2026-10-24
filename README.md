@@ -1,6 +1,6 @@
 # CS Highlights
 
-PoC local: descarga y analiza demos en Windows, macOS y Linux, y genera **un MP4 con tus highlights por partida en Windows o Linux**. Python coordina CS Demo Manager y FFmpeg; no hay servicios web ni dependencias Python de ejecución. macOS permite analizar y descargar, pero no capturar CS2, que no tiene versión nativa para ese sistema.
+PoC local: descarga y analiza demos en Windows, macOS y Linux, y genera **un MP4 con tus highlights por partida en Windows o Linux**. Python coordina CS Demo Manager y FFmpeg; el modo de análisis de muertes usa Pillow para dibujar los recorridos. No hay servicios web. macOS permite analizar y descargar, pero no capturar CS2, que no tiene versión nativa para ese sistema.
 
 ```text
 Steam → CS Demo Manager → demo + análisis JSON → intervalos → CS2 → clips → MP4
@@ -29,6 +29,17 @@ El instalador prepara Python 3.12, FFmpeg/ffprobe, PostgreSQL 17 y CS Demo Manag
 ./scripts/steamos.sh smoke
 ./scripts/steamos.sh run
 ```
+
+Para actualizar una instalación existente y probar la captura por lotes:
+
+```bash
+git pull --ff-only origin main
+./scripts/install-steamos.sh
+./scripts/steamos.sh doctor
+./scripts/steamos.sh smoke --batch
+```
+
+`smoke --batch` divide un intervalo de hasta diez segundos en dos tramos y los graba en una sola sesión de CS2. Acepta también una demo local: `./scripts/steamos.sh smoke --batch /ruta/partida.dem`. Comprueba que el juego arranca una vez y revisa la transición y el audio del `smoke.mp4` indicado. `validation.json` conserva la duración de la sesión y deja la revisión visual pendiente. El instalador actualiza las dependencias Python (incluido Pillow para el minimapa) y conserva la configuración y la base existentes.
 
 Los lanzadores preparan el entorno y arrancan la base automáticamente. La instalación no necesita `sudo`, no desactiva la protección de escritura de SteamOS y no usa la `.venv` copiada de otro equipo. Steam y CS2 se instalan desde Steam. Consulta la guía para parar PostgreSQL, repetir la instalación y resolver fallos. **Prueba real en SteamOS completada:** descarga de ocho demos, análisis y captura de ocho segundos en 1080p60 con H.264/AAC. Queda pendiente escuchar el vídeo para comprobar la sincronización del audio.
 
@@ -98,8 +109,26 @@ El resultado y `validation.json` quedan en `data/smoke/<id>/`. Abre el MP4 y com
 - Los clutches ganados de 1 contra 2, 3, 4 o 5 se incluyen desde el inicio del clutch hasta la resolución de la ronda, con los márgenes configurados. También se incluyen si se ganan sin bajas; se excluyen los perdidos y los 1 contra 1.
 - Si una baja propia contra un enemigo precede a un defuse propio en la misma ronda, se prolonga el clip de la última baja hasta completar la desactivación y su margen posterior. No se añaden defuses aislados ni de compañeros. Los bloques solapados se fusionan.
 - Salida: H.264/AAC en MP4, 1080p60, HUD normal, audio de juego, sin voces ni rayos X. La cámara sigue a tu jugador; después de su muerte depende del comportamiento espectador de CS2.
-- Cada clip se graba por separado y los clips se unen cronológicamente. En Linux la captura genera imágenes y audio sin comprimir; puede necesitar varios GiB por clip. Se comprueba espacio tanto en CS2 como en la salida y se reserva margen para la copia. La velocidad depende del equipo.
-- Las jugadas largas se capturan en tramos equilibrados de hasta diez segundos, sin huecos entre sus ticks, y se concatenan para conservar el bloque completo con un uso acotado de temporales. `intervals.json` distingue las jugadas (`intervals`) de los tramos (`capture_segments`). La selección nueva usa `pipeline_version=2`: al volver a procesar crea otra variante y conserva los vídeos anteriores. Un proceso ya iniciado conserva la selección con la que arrancó.
+- Cada clip tiene su propio MP4 y se une cronológicamente al vídeo final. CS2 permanece abierto entre los clips de un lote: por defecto hasta cuatro, manteniendo los tramos de hasta diez segundos. Al finalizar el lote se cierra para que CS Demo Manager convierta sus imágenes y audio. El tamaño del lote se reduce automáticamente según el espacio disponible en CS2 y en la salida, con margen para la copia. La velocidad depende del equipo; la mejora reduce arranques, sin cambiar resolución ni fps.
+- Las jugadas largas se capturan en tramos equilibrados de hasta diez segundos, sin huecos entre sus ticks, y se concatenan para conservar el bloque completo con un uso acotado de temporales. `intervals.json` distingue las jugadas (`intervals`) de los tramos (`capture_segments`). La selección nueva usa `pipeline_version=3`: al volver a procesar crea otra variante y conserva los vídeos anteriores. Un proceso ya iniciado conserva la selección con la que arrancó.
+
+Todos los MP4 empiezan con hasta cinco segundos de la cámara de presentación del inicio de la primera ronda, antes de las jugadas. Se captura desde la demo sin fijar una cámara de jugador; si la demo no conserva esa escena, el vídeo muestra la cámara predeterminada disponible. Cambia `[intro].duration_seconds` o usa `0` para desactivarla. En el modo `deaths`, el audio de esa apertura se silencia y el audio de las jugadas sigue siendo el de la perspectiva del ejecutor.
+
+En `[runtime]`, `capture_batch_size = 4` limita los clips por sesión (entre 1 y 32). Usa `1` para recuperar el arranque por clip. La opción se aplica también a configuraciones antiguas que no incluyan esa clave y no invalida clips existentes. Cada lote queda registrado en `manifest.json` (`capture_batches`) con sus clips, duración grabada y tiempo transcurrido. Si se interrumpe una conversión, la siguiente ejecución recupera los MP4 terminados y graba solo los pendientes. TrueView requiere lotes independientes: la apertura de `deaths` se captura en una sesión y las perspectivas de los jugadores en las siguientes.
+
+### Modo de análisis de muertes
+
+El modo opcional `deaths` revisa cada muerte causada por un rival con tu cámara y la del ejecutor sincronizadas en pantalla dividida. Incluye diez segundos previos, tres posteriores, el radar animado con recorridos y un informe local en español. Los márgenes se pueden cambiar en `[deaths]` sin alterar `[selection]` ni las variantes de highlights existentes.
+
+```bash
+cs-highlights --config config.toml analyze --mode deaths /ruta/partida.dem
+cs-highlights --config config.toml process --mode deaths /ruta/partida.dem
+cs-highlights --config config.toml run --mode deaths
+```
+
+La primera ejecución analiza posiciones con CS Demo Manager y puede reanalizar la demo si aún no están guardadas. Este modo consulta la base PostgreSQL externa de CS Demo Manager y necesita los radares oficiales del mapa en su instalación. El MP4 muestra ambas cámaras arriba, el minimapa y las evidencias abajo; conserva el audio de la perspectiva del rival. El informe distingue hechos de hipótesis: pasos, audibilidad, visión entre obstáculos y comunicaciones no se pueden confirmar automáticamente con estas reglas. En `analyze`, genera posiciones, recorridos e informe sin capturar vídeo, también en macOS.
+
+El resultado y la recuperación quedan en `data/matches/<sha256-demo>/<huella-deaths>-<hash-recursos-mapa>/`: `deaths.mp4`, `deaths.json`, `positions.json`, los vídeos de ambas perspectivas y `manifest.json`. Los cambios de radar o metadatos generan una variante y conservan el MP4 anterior. TrueView se solicita a CS Demo Manager para los dos vídeos y su compatibilidad sigue dependiendo de la demo y la versión del juego.
 
 ## Archivos y recuperación
 

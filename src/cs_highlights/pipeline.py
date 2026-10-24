@@ -3,15 +3,16 @@ from dataclasses import replace
 from pathlib import Path
 import shutil
 import uuid
+from types import SimpleNamespace
 
 from .analysis import normalize
 from .config import Config
 from .csdm import CSDM
-from .environment import assert_raw_dirs_empty
+from .capture import Capture, capture_many
 from .errors import HighlightsError
 from .selection import select_kills
 from .storage import file_hash, now, read_json, write_json
-from .video import check_space, concatenate, validate_video
+from .video import concatenate, validate_video
 
 
 def capture_segments(intervals, tickrate: float):
@@ -64,7 +65,12 @@ class Pipeline:
         self.versions = versions or {}
         self.report = report
 
-    def process(self, source: Path, *, analysis_only: bool = False) -> Path | None:
+    def process(self, source: Path, *, analysis_only: bool = False, mode: str = "highlights") -> Path | None:
+        if mode == "deaths":
+            from .death_pipeline import DeathPipeline
+            return DeathPipeline(self).process(source, analysis_only=analysis_only)
+        if mode != "highlights":
+            raise HighlightsError(f"Modo de análisis desconocido: {mode}.")
         checksum, demo = import_demo(source, self.config)
         job = demo.parent / self.config.fingerprint
         job.mkdir(parents=True, exist_ok=True)
@@ -132,61 +138,22 @@ class Pipeline:
                 return None
             manifest["reason"] = None
             (job / "clips").mkdir(exist_ok=True)
-            clips = []
-            expected_duration = 0.0
             stage = "render"
             save(stage)
-            self.report(f"{len(intervals)} jugadas en {len(segments)} tramos de hasta 10 s. CS2 se cierra entre clips; "
-                        "después se convierte cada grabación y al final se unen todas.")
+            captures = []
+            intro = self.intro_capture(analysis, job)
+            if intro is not None:
+                captures.append(intro)
             for index, interval in enumerate(segments, 1):
                 name = f"{index:04d}"
-                clip = job / "clips" / f"{name}.mp4"
-                duration = (interval.end_tick - interval.start_tick) / analysis.tickrate
-                expected_duration += duration
-                record = manifest["clips"].get(name)
-                if clip.exists() and record and file_hash(clip) == record.get("sha256"):
-                    validate_video(clip, duration, self.config, self.runner)
-                    self.report(f"Clip {index}/{len(segments)} ya validado")
-                    clips.append(clip)
-                    continue
-                self.report(f"Clip {index}/{len(segments)}: ronda {interval.round_number}, {duration:.1f} s")
-                # A disconnected CLI can leave a job running in CSDM's daemon.
-                self.csdm.assert_idle()
-                attempts = manifest["attempts"].setdefault(name, [])
-                candidate = None
-                attempt = None
-                # Recover a completed recording even if the CLI was interrupted before saving its manifest.
-                for relative in reversed(attempts):
-                    attempt_path = (job / relative).resolve()
-                    if not attempt_path.is_relative_to(job / "render"):
-                        raise HighlightsError("Ruta de intento inválida en el manifiesto.")
-                    found = list(attempt_path.rglob("*.mp4"))
-                    if len(found) == 1:
-                        try:
-                            validate_video(found[0], duration, self.config, self.runner)
-                            candidate, attempt = found[0], attempt_path
-                            break
-                        except HighlightsError:
-                            continue
-                if candidate is None:
-                    assert_raw_dirs_empty(self.config)
-                    check_space(self.config, job, duration)
-                    attempt = job / "render" / f"{name}-{uuid.uuid4().hex}"
-                    attempts.append(str(attempt.relative_to(job)))
-                    save(stage)
-                    self.csdm.render(demo, interval, attempt, job / "logs" / f"{name}.log")
-                    found = list(attempt.rglob("*.mp4"))
-                    if len(found) != 1:
-                        raise HighlightsError(f"Se esperaba un MP4 en {attempt}; hay {len(found)}.")
-                    candidate = found[0]
-                metadata = validate_video(candidate, duration, self.config, self.runner)
-                os.replace(candidate, clip)
-                manifest["clips"][name] = {"sha256": file_hash(clip), "probe": metadata,
-                                           "interval": interval.to_dict()}
-                save(stage)
-                # This tree was created for this attempt and the MP4 is now validated and persisted.
-                shutil.rmtree(attempt)
-                clips.append(clip)
+                captures.append(Capture(name, interval, job / "clips" / f"{name}.mp4",
+                                        (interval.end_tick - interval.start_tick) / analysis.tickrate,
+                                        {"interval": interval.to_dict()}))
+            self.report(f"{len(intervals)} jugadas en {len(segments)} tramos de hasta 10 s; "
+                        f"hasta {self.config.capture_batch_size} clips por sesión de CS2.")
+            capture_many(self, demo, job, manifest, save, stage, captures)
+            clips = [item.path for item in captures]
+            expected_duration = sum(item.duration for item in captures)
 
             stage = "concatenate"
             save(stage)
@@ -203,3 +170,18 @@ class Pipeline:
             if isinstance(exc, KeyboardInterrupt):
                 raise
             raise HighlightsError(f"{source.name}: falló {stage}: {exc}") from exc
+
+    def intro_capture(self, analysis, job, *, silent_audio=False):
+        if self.config.intro_seconds <= 0 or analysis.intro_start_tick is None or analysis.intro_end_tick is None:
+            return None
+        start_tick = analysis.intro_start_tick
+        end_tick = min(analysis.intro_end_tick,
+                       start_tick + max(1, round(self.config.intro_seconds * analysis.tickrate)))
+        duration = (end_tick - start_tick) / analysis.tickrate
+        if duration < 1 / analysis.tickrate:
+            return None
+        return Capture("intro", SimpleNamespace(start_tick=start_tick, end_tick=end_tick),
+                       job / "clips" / "0000.mp4", duration,
+                       {"duration": duration, "start_tick": start_tick, "end_tick": end_tick,
+                        "default_demo_camera": True, "audio_silenced": silent_audio},
+                       focus_player=False, silent_audio=silent_audio)

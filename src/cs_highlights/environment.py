@@ -115,6 +115,8 @@ def prerequisites(config: Config, runner: Runner, *, mode: str = "capture") -> t
             commands.append((["dl-valve"], ["--output"]))
         if capture:
             commands.append((["video"], ["--focus-player", "--recording-output", "--ffmpeg-input-parameters"]))
+            if config.capture_batch_size > 1:
+                commands[-1][1].append("--config-file")
         for command, options in commands:
             output = backend.run([*command, "--help"], timeout=20).stdout
             require(all(option in output for option in options),

@@ -22,21 +22,37 @@ class Config:
     psql: str = "psql"
     before_seconds: float = 5.0
     after_seconds: float = 3.0
+    death_before_seconds: float = 10.0
+    death_after_seconds: float = 3.0
+    intro_seconds: float = 5.0
     width: int = 1920
     height: int = 1080
     fps: int = 60
     crf: int = 20
     timeout_seconds: int = 7200
     reserve_gib: float = 2.0
+    capture_batch_size: int = 4
 
-    def output_settings(self) -> dict:
-        fields = ("steam_id", "before_seconds", "after_seconds", "width", "height", "fps", "crf")
+    def output_settings(self, mode: str = "highlights") -> dict:
         values = asdict(self)
-        return {"pipeline_version": 2, **{key: values[key] for key in fields}}
+        if mode == "highlights":
+            return {"pipeline_version": 3, **{key: values[key] for key in
+                    ("steam_id", "before_seconds", "after_seconds", "intro_seconds",
+                     "width", "height", "fps", "crf")}}
+        if mode != "deaths":
+            raise HighlightsError(f"Modo de salida desconocido: {mode}.")
+        fields = ("steam_id", "death_before_seconds", "death_after_seconds", "intro_seconds",
+                  "width", "height", "fps", "crf")
+        return {"pipeline_version": 1, "mode": mode, "review_version": 3,
+                "composition": "split-screen-radar-v1", "true_view": True,
+                **{key: values[key] for key in fields}}
 
     @property
     def fingerprint(self) -> str:
-        return hashlib.sha256(json.dumps(self.output_settings(), sort_keys=True).encode()).hexdigest()[:16]
+        return self.fingerprint_for_mode("highlights")
+
+    def fingerprint_for_mode(self, mode: str) -> str:
+        return hashlib.sha256(json.dumps(self.output_settings(mode), sort_keys=True).encode()).hexdigest()[:16]
 
     @property
     def raw_dirs(self) -> tuple[Path, Path]:
@@ -57,13 +73,21 @@ def load_config(path: Path) -> Config:
         "player": {"steam_id"}, "paths": {"data_dir", "cs2_dir", "csdm_settings"},
         "tools": {"csdm", "ffmpeg", "ffprobe", "psql"},
         "selection": {"before_seconds", "after_seconds"},
-        "video": {"width", "height", "fps", "crf"}, "runtime": {"timeout_seconds", "reserve_gib"},
+        "deaths": {"before_seconds", "after_seconds"},
+        "intro": {"duration_seconds"},
+        "video": {"width", "height", "fps", "crf"},
+        "runtime": {"timeout_seconds", "reserve_gib", "capture_batch_size"},
     }
     flat = {}
     for section, values in data.items():
         if section not in sections or not isinstance(values, dict) or values.keys() - sections[section]:
             raise HighlightsError(f"Sección u opción desconocida en config: {section}")
-        flat.update(values)
+        if section == "deaths":
+            flat.update({f"death_{key}": value for key, value in values.items()})
+        elif section == "intro":
+            flat["intro_seconds"] = values["duration_seconds"]
+        else:
+            flat.update(values)
     steam_id = flat.get("steam_id")
     if not isinstance(steam_id, str) or not re.fullmatch(r"[0-9]{17}", steam_id):
         raise HighlightsError("player.steam_id debe ser un SteamID64 de 17 dígitos entre comillas.")
@@ -93,8 +117,18 @@ def load_config(path: Path) -> Config:
             value = flat[name]
             if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= maximum:
                 raise HighlightsError(f"{name} debe ser un número finito entre 0 y {maximum}.")
+    flat["intro_seconds"] = flat.get("intro_seconds", 5.0)
+    if (type(flat["intro_seconds"]) not in (int, float) or not math.isfinite(flat["intro_seconds"])
+            or not 0 <= flat["intro_seconds"] <= 30):
+        raise HighlightsError("intro.duration_seconds debe ser un número finito entre 0 y 30.")
+    flat["death_before_seconds"] = flat.get("death_before_seconds", 10.0)
+    flat["death_after_seconds"] = flat.get("death_after_seconds", 3.0)
+    for name, maximum in (("death_before_seconds", 3600), ("death_after_seconds", 3600)):
+        value = flat[name]
+        if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= maximum:
+            raise HighlightsError(f"deaths.{name.removeprefix('death_')} debe ser un número finito entre 0 y {maximum}.")
     bounds = {"width": (800, 7680), "height": (600, 4320), "fps": (1, 240),
-              "crf": (0, 51), "timeout_seconds": (1, 86400)}
+              "crf": (0, 51), "timeout_seconds": (1, 86400), "capture_batch_size": (1, 32)}
     for name, (low, high) in bounds.items():
         if name in flat and (type(flat[name]) is not int or not low <= flat[name] <= high):
             raise HighlightsError(f"{name} debe ser un entero entre {low} y {high}.")
@@ -123,8 +157,10 @@ def create_config(path: Path) -> None:
     lines.extend([f'csdm_settings = {quote(platforms.csdm_settings_path())}', '', '[tools]'])
     lines.extend(f'{name} = {quote(platforms.default_tool(name))}' for name in ("csdm", "ffmpeg", "ffprobe", "psql"))
     lines.extend(['', '[selection]', 'before_seconds = 5.0', 'after_seconds = 3.0', '',
+                  '[deaths]', 'before_seconds = 10.0', 'after_seconds = 3.0', '',
+                  '[intro]', 'duration_seconds = 5.0', '',
                   '[video]', 'width = 1920', 'height = 1080', 'fps = 60', 'crf = 20', '',
-                  '[runtime]', 'timeout_seconds = 7200', 'reserve_gib = 2.0', ''])
+                  '[runtime]', 'timeout_seconds = 7200', 'reserve_gib = 2.0', 'capture_batch_size = 4', ''])
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with path.open("x", encoding="utf-8") as output:

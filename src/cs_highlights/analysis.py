@@ -45,6 +45,13 @@ class Kill:
     victim_side: int
     weapon: str
     headshot: bool
+    through_smoke: bool = False
+    penetrated_objects: int = 0
+    victim_x: float | None = None
+    victim_y: float | None = None
+    victim_z: float | None = None
+    through_smoke_available: bool = True
+    penetrated_objects_available: bool = True
 
 
 @dataclass(frozen=True)
@@ -59,9 +66,27 @@ class Analysis:
     kills: tuple[Kill, ...]
     clutches: tuple[Clutch, ...] = ()
     defuses: tuple[Defuse, ...] = ()
+    shots: tuple[dict, ...] = ()
+    blinds: tuple[dict, ...] = ()
+    shots_available: bool = True
+    blinds_available: bool = True
+    intro_start_tick: int | None = None
+    intro_end_tick: int | None = None
 
-    def to_dict(self) -> dict:
-        return {"schema_version": 2, **asdict(self)}
+    def to_dict(self, *, include_review: bool = False) -> dict:
+        data = asdict(self)
+        if not include_review:
+            data.pop("shots")
+            data.pop("blinds")
+            for kill in data["kills"]:
+                for field in ("through_smoke", "penetrated_objects", "victim_x", "victim_y", "victim_z",
+                              "through_smoke_available", "penetrated_objects_available"):
+                    kill.pop(field)
+            data.pop("shots_available")
+            data.pop("blinds_available")
+            data.pop("intro_start_tick")
+            data.pop("intro_end_tick")
+        return {"schema_version": 2, **data}
 
 
 def integer(value, field: str) -> int:
@@ -88,12 +113,18 @@ def normalize(raw: dict) -> Analysis:
             raise HighlightsError("La demo no contiene ticks válidos.")
         players = tuple(Player(text(p["steamId"], "steamId"), text(p["name"], "name")) for p in raw["players"])
         rounds = []
+        intro_range = None
         for r in raw["rounds"]:
             number = integer(r["number"], "round.number")
             if number <= 0:
                 continue
             start = max(1, integer(r["startTick"], "startTick"),
                         integer(r["freezetimeEndTick"], "freezetimeEndTick"))
+            if number == 1:
+                intro_start = max(0, integer(r["startTick"], "startTick"))
+                intro_end = integer(r["freezetimeEndTick"], "freezetimeEndTick")
+                if intro_end > intro_start:
+                    intro_range = (intro_start, intro_end)
             official = integer(r["endOfficiallyTick"], "endOfficiallyTick")
             # endTick is the outcome event; our interval end is exclusive.
             end = min(ticks, official if official > start else integer(r["endTick"], "endTick") + 1)
@@ -113,11 +144,23 @@ def normalize(raw: dict) -> Analysis:
             # Warmup events are also excluded by the round's playable tick range.
             if k.get("isWarmup") is True:
                 continue
+            coordinates = []
+            for field in ("victimX", "victimY", "victimZ"):
+                value = k.get(field)
+                if type(value) not in (int, float) or not math.isfinite(value):
+                    coordinates.append(None)
+                else:
+                    coordinates.append(float(value))
+            through_smoke = k.get("isThroughSmoke", False)
+            if type(through_smoke) is not bool:
+                raise HighlightsError("JSON de CS Demo Manager incompatible: kill.isThroughSmoke debe ser booleano.")
             kills.append(Kill(
                 integer(k["tick"], "kill.tick"), integer(k["roundNumber"], "roundNumber"),
                 text(k["killerSteamId"], "killerSteamId"), text(k["victimSteamId"], "victimSteamId"),
                 integer(k["killerSide"], "killerSide"), integer(k["victimSide"], "victimSide"),
                 text(k["weaponName"], "weaponName"), bool(k["isHeadshot"]),
+                through_smoke, integer(k.get("penetratedObjects", 0), "kill.penetratedObjects"),
+                *coordinates, "isThroughSmoke" in k, "penetratedObjects" in k,
             ))
         clutches = []
         for c in raw.get("clutches", []):
@@ -131,9 +174,13 @@ def normalize(raw: dict) -> Analysis:
                               integer(d["roundNumber"], "defuse.roundNumber"),
                               text(d["defuserSteamId"], "defuserSteamId"))
                         for d in raw.get("bombsDefused", []))
+        shots = tuple(dict(shot) for shot in raw.get("shots", []) if isinstance(shot, dict))
+        blinds = tuple(dict(blind) for blind in raw.get("blinds", []) if isinstance(blind, dict))
         return Analysis(text(raw["checksum"], "checksum"), text(raw["mapName"], "mapName"),
                         text(raw["date"], "date"), float(rate), ticks, players, tuple(rounds),
                         tuple(sorted(kills, key=lambda k: (k.tick, k.victim_steam_id))),
-                        tuple(clutches), defuses)
+                        tuple(clutches), defuses, shots, blinds,
+                        isinstance(raw.get("shots"), list), isinstance(raw.get("blinds"), list),
+                        *(intro_range or (None, None)))
     except (KeyError, TypeError) as exc:
         raise HighlightsError(f"Formato JSON de CS Demo Manager incompatible: {exc}") from exc

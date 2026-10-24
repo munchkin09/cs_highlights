@@ -7,7 +7,7 @@ name = "cs-highlights"
 version = "0.1.0"
 description = "Local CS2 demo-to-highlights pipeline using CS Demo Manager"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["Pillow>=10.0"]
 classifiers = [
     "Operating System :: Microsoft :: Windows",
     "Operating System :: MacOS",

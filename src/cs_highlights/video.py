@@ -4,6 +4,7 @@ import math
 import os
 from pathlib import Path
 import shutil
+import re
 
 from .commands import Runner
 from .config import Config
@@ -56,16 +57,19 @@ def validate_video(path: Path, duration: float, config: Config, runner: Runner) 
         raise HighlightsError(f"El vídeo no pasa la validación de ffprobe: {path}: {exc}") from exc
 
 
-def concatenate(clips: list[Path], output: Path, duration: float, config: Config, runner: Runner) -> dict:
-    # All entries are generated safe basenames under the job's clips directory.
+def concatenate(clips: list[Path], output: Path, duration: float, config: Config, runner: Runner,
+                *, clip_directory: str = "clips") -> dict:
+    # Only generated basenames in our dedicated media directories reach FFmpeg's playlist.
     entries = []
     for clip in clips:
-        if clip.parent != output.parent / "clips" or not clip.name.replace(".mp4", "").isdigit():
+        valid_name = (clip.name.replace(".mp4", "").isdigit() if clip_directory == "clips"
+                      else bool(re.fullmatch(r"[A-Za-z0-9_-]+\.mp4", clip.name)))
+        if clip_directory not in {"clips", "segments"} or clip.parent != output.parent / clip_directory or not valid_name:
             raise HighlightsError("Ruta de clip inesperada al concatenar.")
-        entries.append(f"file 'clips/{clip.name}'")
-    playlist = output.parent / "concat.txt"
+        entries.append(f"file '{clip_directory}/{clip.name}'")
+    playlist = output.parent / "concat.txt" if clip_directory == "clips" else output.with_suffix(".concat.txt")
     playlist.write_text("\n".join(entries) + "\n", encoding="utf-8")
-    temporary = output.with_name("highlights.partial.mp4")
+    temporary = output.with_name(output.stem + ".partial.mp4")
     required = sum(path.stat().st_size for path in clips) + int(config.reserve_gib * 2**30)
     if shutil.disk_usage(output.parent).free < required:
         raise HighlightsError("No hay espacio para unir los clips.")
@@ -76,3 +80,14 @@ def concatenate(clips: list[Path], output: Path, duration: float, config: Config
     metadata = validate_video(temporary, duration, config, runner)
     os.replace(temporary, output)
     return metadata
+
+
+def replace_audio_with_silence(path: Path, duration: float, config: Config, runner: Runner) -> None:
+    """Keep an opening image sequence while ensuring it contributes no non-player audio."""
+    temporary = path.with_name(path.stem + ".silent.partial.mp4")
+    runner.run([config.ffmpeg, "-nostdin", "-y", "-v", "error", "-i", str(path),
+                "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                "-map", "0:v:0", "-map", "1:a:0", "-t", f"{duration:.6f}",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest",
+                "-movflags", "+faststart", str(temporary)], timeout=config.timeout_seconds)
+    os.replace(temporary, path)

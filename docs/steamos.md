@@ -52,11 +52,14 @@ Desde el proyecto:
 ```bash
 ./scripts/steamos.sh doctor
 ./scripts/steamos.sh smoke
+./scripts/steamos.sh smoke --batch
 ./scripts/steamos.sh run
 ./scripts/steamos.sh process /ruta/partida.dem
 ```
 
 `doctor`, `smoke`, `run`, `process` y `csdm` preparan el `PATH` y arrancan PostgreSQL si hace falta. Siempre usan `config.steamos.toml` de la carpeta del proyecto, incluso al ejecutar el script desde otra carpeta. La prueba `smoke` admite también una ruta de demo. Revisa visualmente su MP4 antes de procesar partidas completas.
+
+`smoke --batch` graba dos tramos consecutivos de una muestra de hasta diez segundos en una sola sesión de CS2 y los une en `smoke.mp4`. En `run` y `process`, el tamaño predeterminado es de hasta cuatro clips por sesión, reducido automáticamente si falta espacio. El juego se cierra al final del lote para convertir sus capturas. Configura `capture_batch_size = 1` dentro del apartado `[runtime]` de `config.steamos.toml` si necesitas volver a un arranque por clip. Los manifiestos guardan los tiempos de cada sesión para compararlos.
 
 ```bash
 ./scripts/steamos.sh db status
@@ -71,6 +74,8 @@ La base escucha únicamente en `127.0.0.1:55432`. Su contraseña está en `postg
 ## Repetir, personalizar y resolver problemas
 
 Puedes repetir `./scripts/install-steamos.sh`: reutiliza el entorno completo y la AppImage extraída, reinstala la CLI editable y conserva el TOML, la contraseña y el clúster existentes. **No actualiza PostgreSQL a otra versión mayor ni borra datos.** Una instalación parcial del entorno se puede reintentar mientras no exista un clúster; si encuentra estado incompatible, se detiene con su ubicación para evitar sobrescribirlo.
+
+Después de `git pull --ff-only origin main`, vuelve a ejecutar el instalador para incorporar las dependencias Python nuevas, incluido Pillow para el minimapa del modo `deaths`. Comprueba `./scripts/steamos.sh doctor` y ejecuta `./scripts/steamos.sh smoke --batch` antes de una partida completa.
 
 Para usar otra carpeta de instalación, establece la misma variable tanto al instalar como al ejecutar:
 

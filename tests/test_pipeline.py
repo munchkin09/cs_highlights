@@ -49,6 +49,7 @@ class FakeCSDM:
         self.fail_at = None
         self.interrupt_after_write = False
         self.busy = False
+        self.batches = []
 
     def export(self, demo, destination, log):
         self.exports += 1
@@ -61,17 +62,23 @@ class FakeCSDM:
         if self.busy:
             raise HighlightsError("cola activa")
 
-    def render(self, demo, interval, output, log):
+    def render(self, demo, interval, output, log, **kwargs):
         self.renders += 1
         if self.renders == self.fail_at:
             raise HighlightsError("render failure")
-        target = output / "video-id/1-sequence.mp4"
+        number = kwargs.get("sequence_number", 1)
+        target = output / "video-id" / f"sequence-{number}-tick-{interval.start_tick}-to-{interval.end_tick}.mp4"
         duration = (interval.end_tick - interval.start_tick) / self.raw["tickrate"]
         write_json(target, probe_data(self.config, duration))
         (target.parent / "owned.tga").write_text("raw frame")
         if self.interrupt_after_write:
             self.interrupt_after_write = False
             raise KeyboardInterrupt
+
+    def render_batch(self, demo, captures, output, log):
+        self.batches.append([item.key for item in captures])
+        for number, item in enumerate(captures, 1):
+            self.render(demo, item.interval, output, log, sequence_number=number)
 
 
 class PipelineTests(unittest.TestCase):
@@ -92,24 +99,27 @@ class PipelineTests(unittest.TestCase):
         output = self.pipeline.process(self.demo)
         self.assertTrue(output.exists())
         self.assertEqual(self.backend.exports, 1)
-        self.assertEqual(self.backend.renders, 4)
+        self.assertEqual(self.backend.renders, 5)
         self.assertEqual(self.manifest()["status"], "complete")
         self.assertTrue((output.parent / "analysis.json").exists())
         self.assertEqual(list(output.parent.rglob("*.tga")), [])
         self.assertEqual(self.pipeline.process(self.demo), output)
-        self.assertEqual((self.backend.exports, self.backend.renders), (1, 4))
+        self.assertEqual((self.backend.exports, self.backend.renders), (1, 5))
+        self.assertEqual((output.parent / "concat.txt").read_text().splitlines()[0],
+                         "file 'clips/0000.mp4'")
 
     def test_failed_render_resumes_after_validated_clip(self):
         self.backend.fail_at = 2
         with self.assertRaisesRegex(HighlightsError, "render failure"):
             self.pipeline.process(self.demo)
         self.assertEqual(self.manifest()["status"], "failed")
-        self.assertEqual(len(self.manifest()["clips"]), 1)
+        # A completed sequence in an interrupted batch is recovered from its numbered MP4.
+        self.assertEqual(len(self.manifest()["clips"]), 0)
         self.backend.fail_at = None
         output = self.pipeline.process(self.demo)
         self.assertTrue(output.exists())
         self.assertEqual(self.backend.exports, 1)
-        self.assertEqual(self.backend.renders, 5)  # 1 valid + 1 failed + remaining 3
+        self.assertEqual(self.backend.renders, 6)  # opening + 1 failed + remaining 4
 
     def test_interrupted_after_recording_recovers_output_without_rerecording(self):
         self.backend.interrupt_after_write = True
@@ -117,7 +127,7 @@ class PipelineTests(unittest.TestCase):
             self.pipeline.process(self.demo)
         self.assertEqual(self.manifest()["status"], "interrupted")
         self.pipeline.process(self.demo)
-        self.assertEqual(self.backend.renders, 4)
+        self.assertEqual(self.backend.renders, 5)
 
     def test_active_daemon_does_not_enqueue_duplicate(self):
         self.backend.busy = True
@@ -154,7 +164,7 @@ class PipelineTests(unittest.TestCase):
         self.pipeline.process(self.demo, analysis_only=True)
         self.assertEqual(self.manifest()["status"], "complete")
         self.assertEqual(self.pipeline.process(self.demo), output)
-        self.assertEqual((self.backend.exports, self.backend.renders), (1, 4))
+        self.assertEqual((self.backend.exports, self.backend.renders), (1, 5))
 
     def test_invalid_analysis_does_not_poison_raw_cache(self):
         self.backend.raw = {"wrong": "schema"}
@@ -175,7 +185,7 @@ class PipelineTests(unittest.TestCase):
         output = self.pipeline.process(self.demo)
         output.write_text("corrupt")
         self.pipeline.process(self.demo)
-        self.assertEqual(self.backend.renders, 4)
+        self.assertEqual(self.backend.renders, 5)
         self.assertEqual(self.manifest()["status"], "complete")
 
     def test_new_settings_preserve_previous_output(self):
@@ -197,8 +207,9 @@ class PipelineTests(unittest.TestCase):
         selection = read_json(output.parent / 'intervals.json')
         self.assertEqual(len(selection['intervals']), 1)
         self.assertGreater(len(selection['capture_segments']), 1)
-        self.assertEqual(manifest['expected_duration'], (7000 - 3000) / 64)
-        self.assertTrue(all(c['probe']['duration'] <= 10 for c in manifest['clips'].values()))
+        self.assertAlmostEqual(manifest['expected_duration'], (7000 - 3000 + 99) / 64)
+        self.assertTrue(all(c['probe']['duration'] <= 10 for c in manifest['clips'].values()
+                            if 'probe' in c))
 
     def test_capture_segments_have_no_gaps_duplicates_or_tiny_tail(self):
         block = Interval(100, 1381, 1, self.c.steam_id, 'won_clutch', (100, 740, 1380))

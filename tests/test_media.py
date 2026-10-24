@@ -52,6 +52,17 @@ class RealMediaTests(unittest.TestCase):
             metadata = concatenate(paths, output, 2, c, runner)
             self.assertAlmostEqual(metadata["duration"], 2, delta=0.1)
             self.assertEqual(metadata["video_codec"], "h264")
+            segments = root / "perspectives/segments"
+            segments.mkdir(parents=True)
+            parts = []
+            for index, path in enumerate(paths, 1):
+                part = segments / f"0001-victim-s{index:02d}.mp4"
+                shutil.copyfile(path, part)
+                parts.append(part)
+            perspective = root / "perspectives/0001-victim.mp4"
+            metadata = concatenate(parts, perspective, 2, c, runner, clip_directory="segments")
+            self.assertAlmostEqual(metadata["duration"], 2, delta=0.1)
+            self.assertIn("segments/0001-victim-s01.mp4", perspective.with_suffix(".concat.txt").read_text())
             with self.assertRaises(HighlightsError):
                 validate_video(output, 10, c, runner)
             with self.assertRaises(HighlightsError):

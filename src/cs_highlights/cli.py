@@ -29,10 +29,13 @@ def parser() -> argparse.ArgumentParser:
                         help="auto: análisis en macOS, captura en Windows/Linux")
     commands.add_parser("init", help="Crea una configuración para este sistema sin sobrescribir archivos existentes")
     analyze = commands.add_parser("analyze", help="Exporta análisis e intervalos sin ejecutar CS2 ni generar vídeo")
+    analyze.add_argument("--mode", choices=("highlights", "deaths"), default="highlights")
     analyze.add_argument("demo", type=Path)
     commands.add_parser("download", help="Descarga demos de Steam sin iniciar una captura")
-    commands.add_parser("run", help="Descubre partidas, descarga demos y procesa las pendientes")
+    run = commands.add_parser("run", help="Descubre partidas, descarga demos y procesa las pendientes")
+    run.add_argument("--mode", choices=("highlights", "deaths"), default="highlights")
     process = commands.add_parser("process", help="Procesa una demo local o reanuda su trabajo")
+    process.add_argument("--mode", choices=("highlights", "deaths"), default="highlights")
     process.add_argument("demo", type=Path)
     return result
 
@@ -85,8 +88,12 @@ def main(argv=None) -> int:
                 print(f"Demos disponibles: {len(demos)} en {config.data_dir / 'downloads'}")
                 return int(failed)
             pipeline = Pipeline(config, csdm, versions, report=lambda message: print(message, flush=True))
+            selection_mode = getattr(args, "mode", "highlights")
             if args.command == "analyze":
-                pipeline.process(args.demo, analysis_only=True)
+                if selection_mode == "deaths":
+                    pipeline.process(args.demo, analysis_only=True, mode=selection_mode)
+                else:
+                    pipeline.process(args.demo, analysis_only=True)
                 return 0
             failed = False
             if args.command == "process":
@@ -106,7 +113,10 @@ def main(argv=None) -> int:
                 print("No hay demos disponibles para procesar.")
             for demo in demos:
                 try:
-                    pipeline.process(demo)
+                    if selection_mode == "deaths":
+                        pipeline.process(demo, mode=selection_mode)
+                    else:
+                        pipeline.process(demo)
                 except (HighlightsError, OSError) as exc:
                     print(f"ERROR · {exc}", file=sys.stderr)
                     failed = True

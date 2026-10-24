@@ -74,7 +74,7 @@ if [[ ! -f "$CSH_RUNTIME/.csh-ready" ]]; then
     touch "$CSH_RUNTIME/.csh-ready"
 fi
 csh_require_runtime
-"$CSH_RUNTIME/bin/python" -m pip install --no-deps --no-build-isolation --editable "$CSH_PROJECT_ROOT"
+"$CSH_RUNTIME/bin/python" -m pip install --no-build-isolation --editable "$CSH_PROJECT_ROOT"
 
 if [[ ! -e "$CSH_CSDM_DIR" ]]; then
     download "https://github.com/akiver/cs-demo-manager/releases/download/v$CSH_CSDM_VERSION/CS-Demo-Manager-$CSH_CSDM_VERSION.AppImage" \

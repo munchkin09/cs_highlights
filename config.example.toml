@@ -20,6 +20,15 @@ psql = "psql"
 before_seconds = 5.0
 after_seconds = 3.0
 
+[deaths]
+# Margen independiente para las jugadas de muerte.
+before_seconds = 10.0
+after_seconds = 3.0
+
+[intro]
+# Duración de la presentación de equipos al comienzo de cada vídeo; 0 la desactiva.
+duration_seconds = 5.0
+
 [video]
 width = 1920
 height = 1080
@@ -30,3 +39,5 @@ crf = 20
 timeout_seconds = 7200
 # Reserva adicional al cálculo de imágenes sin comprimir.
 reserve_gib = 2.0
+# Clips por sesión de CS2. Se reduce automáticamente si falta espacio; 1 recupera el comportamiento anterior.
+capture_batch_size = 4

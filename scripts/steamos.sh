@@ -5,7 +5,7 @@ source "$(dirname -- "${BASH_SOURCE[0]}")/steamos-common.sh"
 case "${1:---help}" in
     -h|--help)
         cat <<'HELP'
-Uso: ./scripts/steamos.sh {doctor|run|process RUTA.dem|smoke [RUTA.dem]|csdm|db OPERACIÓN}
+Uso: ./scripts/steamos.sh {doctor|run|process RUTA.dem|smoke [--batch] [RUTA.dem]|csdm|db OPERACIÓN}
 
 Prepara el entorno local y arranca PostgreSQL antes de ejecutar la aplicación.
 db admite start, stop, status y credentials; no arranca servicios al consultar.
